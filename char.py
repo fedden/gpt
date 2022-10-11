@@ -170,7 +170,7 @@ class CausalSelfAttention(torch.nn.Module):
 
 
 class Block(torch.nn.Module):
-    """ an unassuming Transformer block """
+    """an unassuming Transformer block"""
 
     def __init__(
         self,
@@ -206,7 +206,7 @@ class Block(torch.nn.Module):
 
 
 class GPT(pl.LightningModule):
-    """  the full GPT language model, with a context size of block_size """
+    """the full GPT language model, with a context size of block_size"""
 
     def __init__(
         self,
@@ -435,13 +435,19 @@ class SampleCallback(pl.Callback):
 
 
 @click.command()
-@click.option("--data-source", default="game-of-thrones", help="ID of the dataset")
+@click.option("--data-source", help="ID of the dataset")
+@click.option("--context", help="Context to use for sampling")
 @click.option("--n-epochs", default=50, help="Number of epochs to train for")
 @click.option("--batch-size", default=256, help="Batch size")
 @click.option("--block-size", default=128, help="Block size")
 @click.option("--seed", default=42, help="Seed")
 def pipeline(
-    data_source: str, n_epochs: int, batch_size: int, block_size: int, seed: int
+    data_source: str,
+    context: str,
+    n_epochs: int,
+    batch_size: int,
+    block_size: int,
+    seed: int,
 ) -> None:
     """Train and perform inference."""
     pl.seed_everything(seed)
@@ -471,7 +477,7 @@ def pipeline(
         final_tokens=00 * len(train_dataset) * block_size,
     )
     sample: SampleCallback = SampleCallback(
-        context="The king said, ",
+        context=context,
         itos=train_dataset.itos,
         stoi=train_dataset.stoi,
         steps=1000,
