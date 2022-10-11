@@ -17,6 +17,7 @@ for i in "${!datasets[@]}"; do
     echo "Training model for dataset: $dataset"
     python char.py           \
       --data-source $dataset \
+      --context "$context"   \
       --n-epochs 50	     \
       --batch-size 256       \
       --block-size 128       \
