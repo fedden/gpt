@@ -187,9 +187,8 @@ class CausalSelfAttention(torch.nn.Module):
         # apply the mask and normalize with softmax.
         attention: torch.Tensor = (query @ key.transpose(2, 3)) * scaling_factor
         # Apply the mask to prevent attending to the future.
-        attention = attention.masked_fill(
-            mask=self.is_future_token_mask, value=-torch.inf  # type: ignore
-        )
+        mask: torch.Tensor = self.is_future_token_mask[:, :, :block_size, :block_size]
+        attention = attention.masked_fill(mask=mask, value=-torch.inf)
         # Normalize with softmax. All `-inf` values will be converted to 0.0,
         # so there is no attention being applied to the future tokens.
         attention = torch.nn.functional.softmax(attention, dim=-1)
@@ -456,6 +455,13 @@ class SampleCallback(pl.Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         print("=========================================")
         print(f"Sample from epoch {trainer.current_epoch}")
+        print("=========================================")
+        self.inference(model=pl_module)
+        print("\n")
+
+    def on_train_start(self, trainer, pl_module):
+        print("=========================================")
+        print("Sample from start of training")
         print("=========================================")
         self.inference(model=pl_module)
         print("\n")
