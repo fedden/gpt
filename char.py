@@ -24,8 +24,32 @@ logger = logging.getLogger(__name__)
 # ===============================================================================
 
 
+# Feel free to add more data sources here, this should be a link to a text file
+# that we can download and read as a string.
+AVAILABLE_DATA_SOURCES: Dict[str, str] = {
+    "shakespeare": "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
+    "wikipedia": "https://raw.githubusercontent.com/pytorch/examples/master/word_language_model/data/wikitext-2/train.txt",
+    "philosophy": "https://s3.amazonaws.com/text-datasets/nietzsche.txt",
+    "linux": "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/linux.txt",
+    "midi": "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/music.txt",
+    "game-of-thrones": "https://raw.githubusercontent.com/nihitx/game-of-thrones-/master/gameofthrones.txt",
+}
+
+
 class CharDataset(Dataset):
+    """Character level dataset."""
+
     def __init__(self, data: str, block_size: int) -> None:
+        """Initialize the dataset.
+
+        Parameters
+        ----------
+        data : str
+            The data to use, should be a large body of text.
+        block_size : int
+            The number of characters to use in each block, that is fed into the
+            model.
+        """
         chars: List[str] = sorted(list(set(data)))
         data_size, vocab_size = len(data), len(chars)
         print(f"data has {data_size} characters, {vocab_size} unique.")
@@ -36,41 +60,44 @@ class CharDataset(Dataset):
         self.data: str = data
 
     def __len__(self) -> int:
+        """Return the length of the dataset."""
         return math.ceil(len(self.data) / (self.block_size + 1))
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Return a single item from the dataset."""
         # we're actually going to "cheat" and pick a spot in the dataset at random
         i = np.random.randint(0, len(self.data) - (self.block_size + 1))
         chunk = self.data[i : i + self.block_size + 1]
         dix = [self.stoi[s] for s in chunk]
+        # Input to the model is the first block_size characters.
         x = torch.tensor(dix[:-1], dtype=torch.long)
+        # Target is the next character, or the future character after the block.
         y = torch.tensor(dix[1:], dtype=torch.long)
         return x, y
 
 
 def get_text(data_source: str) -> str:
-    """Download text from url and read it as a string."""
-    available_data_sources: Dict[str, str] = {
-        "shakespeare": "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
-        "wikipedia": "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
-        "philosophy": "https://s3.amazonaws.com/text-datasets/nietzsche.txt",
-        "linux": "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/linux.txt",
-        "midi": "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/music.txt",
-        "game-of-thrones": "https://raw.githubusercontent.com/nihitx/game-of-thrones-/master/gameofthrones.txt",
-    }
-    if data_source not in available_data_sources:
+    """Download text from url or frome file path and read it as a string."""
+    if os.path.isfile(data_source):
+        # If it's a file, just read it.
+        with open(data_source, "r") as f:
+            return f.read()
+    elif data_source in AVAILABLE_DATA_SOURCES:
+        # If it's a url, download it. We'll use the requests library for this.
+        url = AVAILABLE_DATA_SOURCES[data_source]
+        with tempfile.NamedTemporaryFile() as f:
+            logger.info(f"Downloading {data_source} data from {url}")
+            r = requests.get(url)
+            f.write(r.content)
+            f.flush()
+            with open(f.name, "r") as f:  # type: ignore
+                text: str = f.read()  # type: ignore
+                return text
+    else:
         raise ValueError(
-            f"Unknown data source. Available data sources: {available_data_sources.keys()}"
+            f"Unknown data source {data_source}, please either provide a file "
+            f"path or one of {list(AVAILABLE_DATA_SOURCES.keys())}"
         )
-    url = available_data_sources[data_source]
-    with tempfile.NamedTemporaryFile() as f:
-        logger.info(f"Downloading {data_source} data from {url}")
-        r = requests.get(url)
-        f.write(r.content)
-        f.flush()
-        with open(f.name, "r") as f:  # type: ignore
-            text: str = f.read()  # type: ignore
-    return text
 
 
 # ===============================================================================
@@ -96,76 +123,96 @@ class CausalSelfAttention(torch.nn.Module):
         block_size: int,
     ):
         super().__init__()
-        assert n_embedding_dims % n_attention_heads == 0
-        # key, query, value projections for all heads
+        assert n_embedding_dims % n_attention_heads == 0, (
+            "Number of embedding dimensions should be divisible by the number "
+            "of attention heads, this means each head gets an equal share of "
+            "the embedding dimensions."
+        )
+        self.n_head_dims: int = n_embedding_dims // n_attention_heads
+        # The key, query, value projections for all heads
         self.key_projection = torch.nn.Linear(n_embedding_dims, n_embedding_dims)
         self.query_projection = torch.nn.Linear(n_embedding_dims, n_embedding_dims)
         self.value_projection = torch.nn.Linear(n_embedding_dims, n_embedding_dims)
-        # regularization
-        self.self_attention_drop = torch.nn.Dropout(self_attention_drop_probability)
-        self.residual_drop = torch.nn.Dropout(residual_drop_probability)
-        # output projection
+        # Regularization
+        self.self_attention_dropout = torch.nn.Dropout(self_attention_drop_probability)
+        self.residual_dropout = torch.nn.Dropout(residual_drop_probability)
+        # Output projection
         self.output_projection = torch.nn.Linear(n_embedding_dims, n_embedding_dims)
-        # causal mask to ensure that attention is only applied to the left in the input sequence
+        # Causal mask to ensure that attention is only applied to the left in
+        # the input sequence. Basically we don't want to use the future to
+        # predict the present. Top triangle will True, and be converted to -inf
+        triangle_matrix: torch.Tensor = torch.tril(
+            torch.ones(block_size, block_size)
+        ).view(1, 1, block_size, block_size)
         self.register_buffer(
-            "mask",
-            torch.tril(torch.ones(block_size, block_size)).view(
-                1, 1, block_size, block_size
-            ),
+            "is_future_token_mask", torch.isclose(triangle_matrix, torch.tensor(0.0))
         )
+        # Number of heads.
         self.n_attention_heads = n_attention_heads
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute the self-attention."""
         batch_size, block_size, n_embedding_dims = x.shape
-        # Calculate { query, key, values } for all heads in batch and move head
-        # forward to be the batch dim.
-        key: torch.Tensor = (
-            self.key_projection(x)
-            .view(
-                batch_size,
-                block_size,
-                self.n_attention_heads,
-                n_embedding_dims // self.n_attention_heads,
-            )
-            .transpose(1, 2)
-        )  # (B, nh, T, hs)
-        query: torch.Tensor = (
-            self.query_projection(x)
-            .view(
-                batch_size,
-                block_size,
-                self.n_attention_heads,
-                n_embedding_dims // self.n_attention_heads,
-            )
-            .transpose(1, 2)
-        )  # (B, nh, T, hs)
-        value: torch.Tensor = (
-            self.value_projection(x)
-            .view(
-                batch_size,
-                block_size,
-                self.n_attention_heads,
-                n_embedding_dims // self.n_attention_heads,
-            )
-            .transpose(1, 2)
-        )  # (B, nh, T, hs)
-        # causal self-attention; Self-attend:
-        # (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (query @ key.transpose(-2, -1)) * (1.0 / math.sqrt(key.size(-1)))
-        att = att.masked_fill(
-            self.mask[:, :, :block_size, :block_size] == 0, float("-inf")
+        # The intermediate shape to use for the multi-head attention. A
+        # transposition will be required to get the final shape. This splits
+        # the embedding dimensions into multiple attention heads of equal size.
+        to_shape: Tuple[int, int, int, int] = (
+            batch_size,
+            block_size,
+            self.n_attention_heads,
+            self.n_head_dims,
         )
-        att = torch.nn.functional.softmax(att, dim=-1)
-        att = self.self_attention_drop(att)
-        y = att @ value  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        # Calculate { query, key, values } for all heads in batch and move head
+        # forward to be the batch dim. After the reshape and transpose of dims
+        # `1` and `2`, each of the projetions will have shape:
+        #   (batch_size, n_attention_heads, block_size, n_head_dims)
+        key: torch.Tensor = self.key_projection(x).view(to_shape).transpose(1, 2)
+        query: torch.Tensor = self.query_projection(x).view(to_shape).transpose(1, 2)
+        value: torch.Tensor = self.value_projection(x).view(to_shape).transpose(1, 2)
+        # Scale by the square root of the head dimension.
+        # As per the original paper, attention is all you need in sections
+        # 3.2.1, this is to prevent the dot product from growing too large: "We
+        # suspect that for large values of `n_head_dims`, the dot products grow
+        # large in magnitude, pushing the softmax function into regions where
+        # it has extremely small gradients. To counteract this effect, we scale
+        # the dot products by 1.0/sqrt(`n_head_dims`)."
+        # https://arxiv.org/pdf/1706.03762.pdf
+        scaling_factor: float = 1.0 / math.sqrt(self.n_head_dims)
+        # Causal self-attention, or in other words, self-attend:
+        #   (batch_size, n_attention_heads, block_size, n_head_dims)
+        # @ (batch_size, n_attention_heads, n_head_dims, block_size)
+        # = (batch_size, n_attention_heads, block_size, block_size)
+        #
+        # We now have the attention scores for each head, but we still need to
+        # apply the mask and normalize with softmax.
+        attention: torch.Tensor = (query @ key.transpose(2, 3)) * scaling_factor
+        # Apply the mask to prevent attending to the future.
+        attention = attention.masked_fill(
+            mask=self.is_future_token_mask, value=-torch.inf  # type: ignore
+        )
+        # Normalize with softmax. All `-inf` values will be converted to 0.0,
+        # so there is no attention being applied to the future tokens.
+        attention = torch.nn.functional.softmax(attention, dim=-1)
+        # Apply the dropout regularization.
+        attention = self.self_attention_dropout(attention)
+        # Attend to the values to get the readout at each position.
+        #   (batch_size, n_attention_heads, block_size, block_size)
+        # @ (batch_size, n_attention_heads, block_size, n_head_dims)
+        # = (batch_size, n_attention_heads, block_size, n_head_dims)
+        #
+        # Recall that the attention is softmaxed, so the sum of the attention
+        # weights across all positions is 1.0, and this will mean the model
+        # will focus on the most relevant tokens when making a prediction.
+        y = attention @ value
+        # Re-assemble all head outputs side by side, e.g if we had 4 heads of
+        # size 64, the output will be of size 256.
         y = (
             y.transpose(1, 2)
             .contiguous()
             .view(batch_size, block_size, n_embedding_dims)
-        )  # re-assemble all head outputs side by side
-        # output projection
-        y = self.residual_drop(self.output_projection(y))
+        )
+        # Output projection.
+        y = self.residual_dropout(self.output_projection(y))
         return y
 
 
@@ -227,9 +274,11 @@ class GPT(pl.LightningModule):
         # Saves all of the arguments passed to __init__ to self.hparams
         self.save_hyperparameters()
         # input embedding stem
-        self.tok_emb = torch.nn.Embedding(vocab_size, n_embedding_dims)
-        self.pos_emb = torch.nn.Parameter(torch.zeros(1, block_size, n_embedding_dims))
-        self.drop = torch.nn.Dropout(embedding_drop_probability)
+        self.char_token_embeddings = torch.nn.Embedding(vocab_size, n_embedding_dims)
+        self.position_embeddings = torch.nn.Parameter(
+            torch.zeros(1, block_size, n_embedding_dims)
+        )
+        self.embedding_dropout = torch.nn.Dropout(embedding_drop_probability)
         # transformer
         blocks: List[Block] = [
             Block(
@@ -281,29 +330,63 @@ class GPT(pl.LightningModule):
         )
         return optimizer
 
-    def forward(self, idx):
-        b, t = idx.size()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """forward pass of the model.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            input tensor of shape (batch_size, block_size). Here `x` is a
+            sequence of tokens, where each token is an integer in the range
+            [0, vocab_size).
+
+        Returns
+        -------
+        logits : torch.Tensor
+            output tensor of shape (batch_size, block_size, vocab_size).
+        """
+        batch_size, block_size = x.shape
         assert (
-            t <= self.hparams.block_size
+            block_size <= self.hparams.block_size
         ), "Cannot forward, model block size is exhausted."
-        # forward the GPT model
-        token_embeddings = self.tok_emb(idx)  # each index maps to a (learnable) vector
-        position_embeddings = self.pos_emb[
-            :, :t, :
-        ]  # each position maps to a (learnable) vector
-        x = self.drop(token_embeddings + position_embeddings)
+        # Each index is mapped to a learnable vector. If we had a different
+        # modality to text, such as audio, we could skip the learnable
+        # embeddings and feed the raw data directly to the transformer.
+        token_embeddings: torch.Tensor = self.char_token_embeddings(x)
+        # Each position maps to a learnable vector. Other models use sinusoidal
+        # embeddings, but this is a simple way to get the job done. This has a
+        # shape of (1, block_size, n_embedding_dims).
+        position_embeddings: torch.Tensor = self.position_embeddings[:, :block_size, :]
+        # Add the token and position embeddings together, and apply dropout.
+        x = self.embedding_dropout(token_embeddings + position_embeddings)
+        # Forward pass the transformer blocks. We feed in a shape of
+        # (batch_size, block_size, n_embedding_dims) and get back a shape of
+        # the same shape: (batch_size, block_size, n_embedding_dims).
         x = self.blocks(x)
+        # Apply layer norm.
         x = self.layer_norm(x)
-        logits = self.head(x)
+        # Project the `n_embedding_dims dimension (dim=2) of the transformer
+        # blocks to the vocab size.
+        logits: torch.Tensor = self.head(x)
         return logits
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx: int):
+        """Forward pass and loss calculation for training."""
+        # unpack the batch, which is `x` and `y`. `y` is the same as `x`, but
+        # shifted by one token to the right. Both `x` and `y` are of shape
+        # (batch_size, block_size).
         x, y = batch
-        # same action as inference
-        logits = self(x)
-        # if we are given some desired targets also calculate the loss
-        loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)), y.view(-1)
+        # Forward pass the data through the model. Get the logits, which has a
+        # shape of (batch_size, block_size, vocab_size).
+        logits: torch.Tensor = self(x)
+        # Collapse the logits into a shape of
+        # (batch_size * block_size, vocab_size)
+        collapsed_logits: torch.Tensor = logits.view(-1, self.hparams["vocab_size"])
+        # Collapse the labels into a shape of (batch_size * block_size,).
+        collapsed_y: torch.Tensor = y.view(-1)
+        # For each token in the sequence, calculate the cross entropy loss.
+        loss: torch.Tensor = torch.nn.functional.cross_entropy(
+            collapsed_logits, collapsed_y
         )
         self.log("train_loss", loss)
         return loss
@@ -435,7 +518,14 @@ class SampleCallback(pl.Callback):
 
 
 @click.command()
-@click.option("--data-source", help="ID of the dataset")
+@click.option(
+    "--data-source",
+    help=(
+        f"Either a valid path to a text file locally that can be read for the"
+        f"chars, or one of the following IDs, which link to URLs that will be"
+        f"downloaded and cached locally: {list(AVAILABLE_DATA_SOURCES)}"
+    ),
+)
 @click.option("--context", help="Context to use for sampling")
 @click.option("--n-epochs", default=50, help="Number of epochs to train for")
 @click.option("--batch-size", default=256, help="Batch size")
