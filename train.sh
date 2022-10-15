@@ -18,7 +18,7 @@ for i in "${!datasets[@]}"; do
     python char.py           \
       --data-source $dataset \
       --context "$context"   \
-      --n-epochs 50	     \
+      --n-epochs 100	     \
       --batch-size 256       \
       --block-size 128       \
       --seed 42
