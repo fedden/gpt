@@ -24,15 +24,35 @@ logger = logging.getLogger(__name__)
 # ===============================================================================
 
 
-# Feel free to add more data sources here, this should be a link to a text file
-# that we can download and read as a string.
-AVAILABLE_DATA_SOURCES: Dict[str, str] = {
-    "shakespeare": "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
-    "wikipedia": "https://raw.githubusercontent.com/pytorch/examples/master/word_language_model/data/wikitext-2/train.txt",
-    "philosophy": "https://s3.amazonaws.com/text-datasets/nietzsche.txt",
-    "linux": "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/linux.txt",
-    "midi": "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/music.txt",
-    "game-of-thrones": "https://raw.githubusercontent.com/nihitx/game-of-thrones-/master/gameofthrones.txt",
+# Feel free to add more data sources here, this should be a link to one or more
+# text files that we can download and read as a string. Check github/google
+# around - there is a lot of context available out there.
+AVAILABLE_DATA_SOURCES: Dict[str, List[str]] = {
+    "shakespeare": [
+        "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+    ],
+    "wikipedia": [
+        "https://raw.githubusercontent.com/pytorch/examples/master/word_language_model/data/wikitext-2/train.txt"
+    ],
+    "philosophy": ["https://s3.amazonaws.com/text-datasets/nietzsche.txt"],
+    "linux": [
+        "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/linux.txt"
+    ],
+    "midi": [
+        "https://raw.githubusercontent.com/cedricdeboom/character-level-rnn-datasets/master/datasets/music.txt"
+    ],
+    "game-of-thrones": [
+        "https://raw.githubusercontent.com/nihitx/game-of-thrones-/master/gameofthrones.txt"
+    ],
+    "harry-potter": [
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%201%20-%20The%20Philosopher's%20Stone.txt",
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%202%20-%20The%20Chamber%20of%20Secrets.txt",
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%203%20-%20The%20Prisoner%20of%20Azkaban.txt",
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%204%20-%20The%20Goblet%20of%20Fire.txt",
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%205%20-%20The%20Order%20of%20the%20Phoenix.txt",
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%206%20-%20The%20Half%20Blood%20Prince.txt",
+        "https://raw.githubusercontent.com/formcept/whiteboard/master/nbviewer/notebooks/data/harrypotter/Book%207%20-%20The%20Deathly%20Hallows.txt",
+    ],
 }
 
 
@@ -83,16 +103,20 @@ def get_text(data_source: str) -> str:
         with open(data_source, "r") as f:
             return f.read()
     elif data_source in AVAILABLE_DATA_SOURCES:
-        # If it's a url, download it. We'll use the requests library for this.
-        url = AVAILABLE_DATA_SOURCES[data_source]
-        with tempfile.NamedTemporaryFile() as f:
-            logger.info(f"Downloading {data_source} data from {url}")
-            r = requests.get(url)
-            f.write(r.content)
-            f.flush()
-            with open(f.name, "r") as f:  # type: ignore
-                text: str = f.read()  # type: ignore
-                return text
+        # If it's url(s), download it/them. We'll use the requests library for
+        # this.
+        urls: List[str] = AVAILABLE_DATA_SOURCES[data_source]
+        assert isinstance(urls, list), f"Urls should be list but was type: {type(urls)}"
+        text: str = ""
+        for url in urls:
+            with tempfile.NamedTemporaryFile() as f:
+                logger.info(f"Downloading {data_source} data from {url}")
+                r = requests.get(url)
+                f.write(r.content)
+                f.flush()
+                with open(f.name, "r") as f:  # type: ignore
+                    text += f.read()  # type: ignore
+        return text
     else:
         raise ValueError(
             f"Unknown data source {data_source}, please either provide a file "
@@ -108,10 +132,17 @@ def get_text(data_source: str) -> str:
 
 
 class CausalSelfAttention(torch.nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    I believe I could have just used torch.nn.MultiheadAttention but their documentation
-    is all but absent and code ugly so I don't trust it, rolling my own here.
+    """A Causal Self-Attention module.
+
+    This module is based on the paper "Attention is all you need" by Vaswani et
+    al. and the paper "Language Models are Unsupervised Multitask Learners" by
+    Brown et al. The module is a causal self-attention module, meaning that the
+    attention is only applied to the left of the current token. This is done by
+    masking out the attention to the right of the current token. Ultimately,
+    this module is a vanilla multi-head masked self-attention layer with a
+    projection at the end. This could likely have been implemented with
+    `torch.nn.MultiheadAttention`, but the documentation is sparse and code is
+    not clear, so as an exercise we'll implement it ourself here.
     """
 
     def __init__(
@@ -135,12 +166,13 @@ class CausalSelfAttention(torch.nn.Module):
         self.value_projection = torch.nn.Linear(n_embedding_dims, n_embedding_dims)
         # Regularization
         self.self_attention_dropout = torch.nn.Dropout(self_attention_drop_probability)
-        self.residual_dropout = torch.nn.Dropout(residual_drop_probability)
+        self.output_dropout = torch.nn.Dropout(residual_drop_probability)
         # Output projection
         self.output_projection = torch.nn.Linear(n_embedding_dims, n_embedding_dims)
         # Causal mask to ensure that attention is only applied to the left in
         # the input sequence. Basically we don't want to use the future to
-        # predict the present. Top triangle will True, and be converted to -inf
+        # predict the present. Top triangle will be True, and be converted to
+        # -infinity and thus zero when passed through a softmax function.
         triangle_matrix: torch.Tensor = torch.tril(
             torch.ones(block_size, block_size)
         ).view(1, 1, block_size, block_size)
@@ -214,10 +246,10 @@ class CausalSelfAttention(torch.nn.Module):
             .view(batch_size, block_size, n_embedding_dims)
         )
         # Output projection.
-        return self.residual_dropout(self.output_projection(y))
+        return self.output_dropout(self.output_projection(y))
 
 
-class Block(torch.nn.Module):
+class GptTransformerBlock(torch.nn.Module):
     """an unassuming Transformer block"""
 
     def __init__(
@@ -245,6 +277,7 @@ class Block(torch.nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass the transformer block."""
         layer_norm_x: torch.Tensor = self.layer_norm(x)
         # Self attention with residual connection.
         x = x + self.self_attention(layer_norm_x)
@@ -253,8 +286,8 @@ class Block(torch.nn.Module):
         return x
 
 
-class GPT(pl.LightningModule):
-    """the full GPT language model, with a context size of block_size"""
+class GptTransfomer(pl.LightningModule):
+    """the full GptTransfomer language model, with a context size of block_size"""
 
     def __init__(
         self,
@@ -274,15 +307,15 @@ class GPT(pl.LightningModule):
         self.hparams: Any  # Adding this line to please mypy.
         # Saves all of the arguments passed to __init__ to self.hparams
         self.save_hyperparameters()
-        # input embedding stem
+        # Input embedding stem.
         self.char_token_embeddings = torch.nn.Embedding(vocab_size, n_embedding_dims)
         self.position_embeddings = torch.nn.Parameter(
             torch.zeros(1, block_size, n_embedding_dims)
         )
         self.embedding_dropout = torch.nn.Dropout(embedding_drop_probability)
-        # transformer
-        blocks: List[Block] = [
-            Block(
+        # Transformer blocks.
+        blocks: List[GptTransformerBlock] = [
+            GptTransformerBlock(
                 n_embedding_dims=self.hparams.n_embedding_dims,
                 n_attention_heads=self.hparams.n_attention_heads,
                 self_attention_drop_probability=self.hparams.self_attention_drop_probability,
@@ -292,16 +325,15 @@ class GPT(pl.LightningModule):
             for _ in range(self.hparams.n_layers)
         ]
         self.blocks = torch.nn.Sequential(*blocks)
-        # decoder head
+        # Decoder head (layer norm the final output and project to vocab size).
         self.layer_norm = torch.nn.LayerNorm(self.hparams.n_embedding_dims)
         self.head = torch.nn.Linear(
             self.hparams.n_embedding_dims, self.hparams.vocab_size, bias=False
         )
         # Initialise parameters.
         self.apply(self._init_weights)
-        logger.info(
-            "number of parameters: %e", sum(p.numel() for p in self.parameters())
-        )
+        n_parameters: int = sum(p.numel() for p in self.parameters())
+        logger.info(f"Number of parameters: {n_parameters}")
 
     def _init_weights(self, module: torch.nn.Module) -> None:
         """Initialize the weights."""
@@ -314,20 +346,39 @@ class GPT(pl.LightningModule):
             module.weight.data.fill_(1.0)
 
     def configure_optimizers(self):
-        # create the optimizer
-        no_decay = ["bias", "LayerNorm.weight"]
-        params_decay = [
-            p for n, p in self.named_parameters() if not any(nd in n for nd in no_decay)
-        ]
-        params_nodecay = [
-            p for n, p in self.named_parameters() if any(nd in n for nd in no_decay)
-        ]
-        optim_groups = [
-            {"params": params_decay, "weight_decay": self.hparams.weight_decay},
-            {"params": params_nodecay, "weight_decay": 0.0},
+        """Create the optimizer.
+
+        Creates two lists of parmeters - those with, and those without weight
+        decay (L2 regularization). The parameters without weight decay are the
+        bias and LayerNorm parameters, and the parameters with weight decay are
+        the rest.
+        """
+        no_weight_decay_names: List[str] = ["bias", "LayerNorm.weight"]
+        # Loop over the parameters, and sort them into two groups, one with
+        # weight decay, and one without.
+        params_weight_decay: List[torch.nn.Parameter] = []
+        params_no_weight_decay: List[torch.nn.Parameter] = []
+        for name, parameters in self.named_parameters():
+            # If the parameter name matches any of the names in the list of
+            # names without weight decay, add it to the list of parameters
+            # without weight decay. Otherwise, add it to the list of parameters
+            # with weight decay.
+            is_no_weight_decay_parameter: bool = any(
+                no_weight_decay_name in name
+                for no_weight_decay_name in no_weight_decay_names
+            )
+            if is_no_weight_decay_parameter:
+                params_no_weight_decay.append(parameters)
+            else:
+                params_weight_decay.append(parameters)
+        breakpoint()
+        # Create the AdamW optimizer, with the two groups of parameters.
+        param_groups: List[Dict[str, Any]] = [
+            {"params": params_weight_decay, "weight_decay": self.hparams.weight_decay},
+            {"params": params_no_weight_decay, "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(
-            optim_groups, lr=self.hparams.learning_rate, betas=self.hparams.betas
+            param_groups, lr=self.hparams.learning_rate, betas=self.hparams.betas
         )
         return optimizer
 
@@ -414,16 +465,14 @@ class LearningRateDecayCallback(pl.Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         optimizer = trainer.optimizers[0]
         _, y = batch
-
         if self.lr_decay:
-            self.tokens += (
-                y >= 0
-            ).sum()  # number of tokens processed this step (i.e. label is not -100)
+            # Number of tokens processed this step (i.e. label is not -100).
+            self.tokens += (y >= 0).sum()
             if self.tokens < self.warmup_tokens:
-                # linear warmup
+                # Linear warmup of learning rate.
                 lr_mult = float(self.tokens) / float(max(1, self.warmup_tokens))
             else:
-                # cosine learning rate decay
+                # Cosine learning rate decay learning rate.
                 progress = float(self.tokens - self.warmup_tokens) / float(
                     max(1, self.final_tokens - self.warmup_tokens)
                 )
@@ -477,42 +526,55 @@ class SampleCallback(pl.Callback):
         return out
 
     @torch.no_grad()
-    def inference(self, model: GPT) -> str:
+    def inference(self, model: GptTransfomer) -> str:
+        """Generate text from the model.
+
+        Here we will take a conditioning sequence of indices in x (of shape
+        (batch_size, block_size)) and predict the next token in the sequence,
+        feeding the predictions back into the model each time. Clearly the
+        sampling has quadratic complexity unlike an RNN that is only linear,
+        and has a finite context window of block_size, unlike an RNN that has
+        an infinite context window.
         """
-        take a conditioning sequence of indices in x (of shape (b,t)) and predict the next token in
-        the sequence, feeding the predictions back into the model each time. Clearly the sampling
-        has quadratic complexity unlike an RNN that is only linear, and has a finite context window
-        of block_size, unlike an RNN that has an infinite context window.
-        """
-        assert isinstance(model, GPT), "model must be an instance of GPT"
+        assert isinstance(model, GptTransfomer), "model must be an instance of GptTransfomer"
+        # Convert the context to a tensor ready to be fed to the model.
         x: torch.Tensor = torch.tensor(
             [self.stoi[s] for s in self.context], dtype=torch.long
         )[None, ...].to(model.device)
+        # We will print as we go (e.g no newline at the end of each print
+        # statement).
         print(self.context, end="", flush=True)
+        # Inference time.
         model.eval()
         for k in range(self.steps):
-            x_cond = (
+            # Crop the context window if needed.
+            cropped_x: torch.Tensor = (
                 x
                 if x.size(1) <= model.hparams.block_size
                 else x[:, -model.hparams.block_size :]
-            )  # crop context if needed
-            logits = model(x_cond)
-            # pluck the logits at the final step and scale by temperature
+            )
+            # Pluck the logits at the final step and scale by temperature
+            logits: torch.Tensor = model(cropped_x)
             logits = logits[:, -1, :] / self.temperature
-            # optionally crop probabilities to only the top k options
+            # Optionally crop probabilities to only the top k options. This
+            # will set the non-top-k logits to negative infinity, meaning they
+            # will be ingnored after softmaxing.
             if self.top_k is not None:
                 logits = self._top_k_logits(logits, self.top_k)
-            # apply softmax to convert to probabilities
-            probs = torch.nn.functional.softmax(logits, dim=-1)
-            # sample from the distribution or take the most likely
+            # Apply softmax to convert to probabilities.
+            likelihoods: torch.Tensor = torch.nn.functional.softmax(logits, dim=-1)
+            # Sample from the distribution or take the most likely/argmax.
             if self.sample:
-                ix = torch.multinomial(probs, num_samples=1)
+                predicted_class_i: torch.Tensor = torch.multinomial(
+                    likelihoods, num_samples=1
+                )
             else:
-                _, ix = torch.topk(probs, k=1, dim=-1)
-            # Push the new index onto the context and pop the first index if we're
-            # overflowing.
-            x = torch.cat((x, ix), dim=1)
-            print(self.itos[ix.item()], end="", flush=True)
+                _, predicted_class_i = torch.topk(likelihoods, k=1, dim=-1)
+            # Push the new index onto the context. This will be cropped out
+            # above in a future iteration if `x` has a size greater than
+            # `block_size`.
+            x = torch.cat((x, predicted_class_i), dim=1)
+            print(self.itos[int(predicted_class_i.item())], end="", flush=True)
         print("\r", end="")
         # Covert the indices to text.
         return "".join([self.itos[int(i)] for i in x[0].tolist()])
@@ -554,7 +616,7 @@ def pipeline(
     train_loader: DataLoader = DataLoader(
         train_dataset, batch_size=batch_size, num_workers=multiprocessing.cpu_count()
     )
-    model: GPT = GPT(
+    model: GptTransfomer = GptTransfomer(
         # Number of tokens in the vocabulary.
         vocab_size=train_dataset.vocab_size,
         # Size of the sequence.
@@ -589,7 +651,7 @@ def pipeline(
     if os.path.isfile(model_path):
         print(f"Found pre-trained model, loading model from: {model_path}")
         # Load the model.
-        model = GPT.load_from_checkpoint(model_path)
+        model = GptTransfomer.load_from_checkpoint(model_path)
     else:
         print(f"No model found, so training model, saving to: {model_path}")
         # Train the model.
