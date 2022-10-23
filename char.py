@@ -149,6 +149,9 @@ class CausalSelfAttention(torch.nn.Module):
         )
         # Number of heads.
         self.n_attention_heads = n_attention_heads
+        # Used for visualisation
+        self.attention: Optional[torch.Tensor] = None
+        self.y: Optional[torch.Tensor] = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute the self-attention."""
@@ -193,7 +196,7 @@ class CausalSelfAttention(torch.nn.Module):
         # so there is no attention being applied to the future tokens.
         attention = torch.nn.functional.softmax(attention, dim=-1)
         # Apply the dropout regularization.
-        attention = self.self_attention_dropout(attention)
+        self.attention = attention = self.self_attention_dropout(attention)
         # Attend to the values to get the readout at each position.
         #   (batch_size, n_attention_heads, block_size, block_size)
         # @ (batch_size, n_attention_heads, block_size, n_head_dims)
@@ -205,14 +208,13 @@ class CausalSelfAttention(torch.nn.Module):
         y = attention @ value
         # Re-assemble all head outputs side by side, e.g if we had 4 heads of
         # size 64, the output will be of size 256.
-        y = (
+        self.y = y = (
             y.transpose(1, 2)
             .contiguous()
             .view(batch_size, block_size, n_embedding_dims)
         )
         # Output projection.
-        y = self.residual_dropout(self.output_projection(y))
-        return y
+        return self.residual_dropout(self.output_projection(y))
 
 
 class Block(torch.nn.Module):
