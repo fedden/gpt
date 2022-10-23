@@ -1,4 +1,5 @@
 """Char generation tutorial with transfomers."""
+import fnmatch
 import logging
 import math
 import multiprocessing
@@ -353,7 +354,14 @@ class GptTransfomer(pl.LightningModule):
         bias and LayerNorm parameters, and the parameters with weight decay are
         the rest.
         """
-        no_weight_decay_names: List[str] = ["bias", "LayerNorm.weight"]
+        verbose: bool = True
+        # Don't apply weight decay to bias terms - we only need to regularise
+        # the weights, the biases will work as intercepts.
+        no_weight_decay_glob_patterns: List[str] = [
+            "*.bias",
+            "*layer_norm.weight",
+            "char_token_embeddings.weight",
+        ]
         # Loop over the parameters, and sort them into two groups, one with
         # weight decay, and one without.
         params_weight_decay: List[torch.nn.Parameter] = []
@@ -364,14 +372,15 @@ class GptTransfomer(pl.LightningModule):
             # without weight decay. Otherwise, add it to the list of parameters
             # with weight decay.
             is_no_weight_decay_parameter: bool = any(
-                no_weight_decay_name in name
-                for no_weight_decay_name in no_weight_decay_names
+                fnmatch.fnmatch(name, pattern)
+                for pattern in no_weight_decay_glob_patterns
             )
             if is_no_weight_decay_parameter:
                 params_no_weight_decay.append(parameters)
             else:
                 params_weight_decay.append(parameters)
-        breakpoint()
+            if verbose:
+                print(f"{name} - weight decay: {not is_no_weight_decay_parameter}")
         # Create the AdamW optimizer, with the two groups of parameters.
         param_groups: List[Dict[str, Any]] = [
             {"params": params_weight_decay, "weight_decay": self.hparams.weight_decay},
@@ -536,7 +545,9 @@ class SampleCallback(pl.Callback):
         and has a finite context window of block_size, unlike an RNN that has
         an infinite context window.
         """
-        assert isinstance(model, GptTransfomer), "model must be an instance of GptTransfomer"
+        assert isinstance(
+            model, GptTransfomer
+        ), "model must be an instance of GptTransfomer"
         # Convert the context to a tensor ready to be fed to the model.
         x: torch.Tensor = torch.tensor(
             [self.stoi[s] for s in self.context], dtype=torch.long
