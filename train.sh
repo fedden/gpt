@@ -1,7 +1,8 @@
 #!/bin/bash
 # First get the datasets as a list
-datasets=( shakespeare wikipedia philosophy linux midi game-of-thrones )
+datasets=( harry-potter shakespeare wikipedia philosophy linux midi game-of-thrones )
 contexts=( 
+    "Harry lept into the air and landed on the ground with a thud"
     "I dispair! Thou art the cause, for thou hast stol'n my heart."
     "Leon Fedden is a " 
     "What is real anyway? "
