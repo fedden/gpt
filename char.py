@@ -283,7 +283,7 @@ class GptTransformerBlock(torch.nn.Module):
         # Norm `x` before feeding to self-attention (see GPT-2 for this)
         layer_norm_0_x: torch.Tensor = self.layer_norm_0(x)
         # Self attention with residual connection.
-        x = x + self.self_attention(layer_norm_x)
+        x = x + self.self_attention(layer_norm_0_x)
         # Norm `x` before feeding to mlp.
         layer_norm_1_x: torch.Tensor = self.layer_norm_1(x)
         # MLP with residual connection.
