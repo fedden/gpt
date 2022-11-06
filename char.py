@@ -251,7 +251,7 @@ class CausalSelfAttention(torch.nn.Module):
 
 
 class GptTransformerBlock(torch.nn.Module):
-    """an unassuming Transformer block"""
+    """GPT Transformer block."""
 
     def __init__(
         self,
@@ -262,7 +262,8 @@ class GptTransformerBlock(torch.nn.Module):
         block_size: int,
     ):
         super().__init__()
-        self.layer_norm = torch.nn.LayerNorm(n_embedding_dims)
+        self.layer_norm_0 = torch.nn.LayerNorm(n_embedding_dims)
+        self.layer_norm_1 = torch.nn.LayerNorm(n_embedding_dims)
         self.self_attention = CausalSelfAttention(
             n_embedding_dims=n_embedding_dims,
             n_attention_heads=n_attention_heads,
@@ -279,16 +280,19 @@ class GptTransformerBlock(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass the transformer block."""
-        layer_norm_x: torch.Tensor = self.layer_norm(x)
+        # Norm `x` before feeding to self-attention (see GPT-2 for this)
+        layer_norm_0_x: torch.Tensor = self.layer_norm_0(x)
         # Self attention with residual connection.
         x = x + self.self_attention(layer_norm_x)
+        # Norm `x` before feeding to mlp.
+        layer_norm_1_x: torch.Tensor = self.layer_norm_1(x)
         # MLP with residual connection.
-        x = x + self.mlp(layer_norm_x)
+        x = x + self.mlp(layer_norm_1_x)
         return x
 
 
 class GptTransfomer(pl.LightningModule):
-    """the full GptTransfomer language model, with a context size of block_size"""
+    """The GptTransfomer language model, with a context window-size of `block_size`."""
 
     def __init__(
         self,
@@ -333,18 +337,27 @@ class GptTransfomer(pl.LightningModule):
         )
         # Initialise parameters.
         self.apply(self._init_weights)
+        # Apply a special scaled init to the residual projections, per GPT-2 paper.
+        for name, parameters in self.named_parameters():
+            if fnmatch.fnmatch(name, "*.mlp.2.weight"):
+                torch.nn.init.normal_(
+                    parameters, 
+                    mean=0.0, 
+                    std=0.02 / math.sqrt(2 * self.hparams.n_layers),
+                )
+        # Log the parameters.
         n_parameters: int = sum(p.numel() for p in self.parameters())
         logger.info(f"Number of parameters: {n_parameters}")
 
     def _init_weights(self, module: torch.nn.Module) -> None:
         """Initialize the weights."""
         if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if isinstance(module, torch.nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
+                torch.nn.init.zeros_(module.bias)
         elif isinstance(module, torch.nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+            torch.nn.init.zeros_(module.bias)
+            torch.nn.init.ones_(module.weight)
 
     def configure_optimizers(self):
         """Create the optimizer.
@@ -424,7 +437,7 @@ class GptTransfomer(pl.LightningModule):
         # (batch_size, block_size, n_embedding_dims) and get back a shape of
         # the same shape: (batch_size, block_size, n_embedding_dims).
         x = self.blocks(x)
-        # Apply layer norm.
+        # Apply layer norm after last block (GPT-2 introduced this)
         x = self.layer_norm(x)
         # Project the `n_embedding_dims dimension (dim=2) of the transformer
         # blocks to the vocab size.
