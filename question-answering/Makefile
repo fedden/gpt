@@ -67,9 +67,12 @@ remove-kernel:
 clean: remove-kernel
 	rm -rf ./.venv
 	rm -rf ./build
+	rm -rf ~/nltk_data
 
 
 # Install or update the virtualenv;
 # Careful that switching MODE may require a `make clean` to ensure a fresh state:
 .PHONY: init
 init: venv install-kernel
+	source .venv/bin/activate; \
+	python -m nltk.downloader -d ~/nltk_data all; \
