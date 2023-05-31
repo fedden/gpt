@@ -1,3 +1,5 @@
+accelerate==0.19.0
+bitsandbytes==0.39.0
 langchain==0.0.179
 gpt4all==0.2.3
 chromadb==0.3.23
@@ -12,3 +14,4 @@ tabulate==0.9.0
 pandoc==2.3
 pypandoc==1.11
 tqdm==4.65.0
+transformers==4.30.0.dev0
