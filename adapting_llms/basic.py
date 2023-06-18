@@ -1,5 +1,4 @@
 import fnmatch
-import logger
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -220,9 +219,12 @@ class GptTransfomer(pl.LightningModule):
                     mean=0.0,
                     std=0.02 / math.sqrt(2 * self.hparams.n_layers),
                 )
-        # Log the parameters.
-        n_parameters: int = sum(p.numel() for p in self.parameters())
-        logger.info(f"Number of parameters: {n_parameters}")
+        # Log the trainable parameters.
+        n_trainable_parameters: int = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(f"Number of trainable parameters: {n_trainable_parameters}")
+        # Log the total parameters.
+        n_total_parameters: int = sum(p.numel() for p in self.parameters())
+        print(f"Number of total parameters: {n_total_parameters}")
 
     def _init_weights(self, module: torch.nn.Module) -> None:
         """Initialize the weights."""
@@ -311,7 +313,8 @@ class GptTransfomer(pl.LightningModule):
         # Forward pass the transformer blocks. We feed in a shape of
         # (batch_size, block_size, n_embedding_dims) and get back a shape of
         # the same shape: (batch_size, block_size, n_embedding_dims).
-        x = self.blocks(x)
+        for block in self.blocks:
+            x = block(x)
         # Apply layer norm after last block (GPT-2 introduced this)
         x = self.layer_norm(x)
         # Project the `n_embedding_dims dimension (dim=2) of the transformer
@@ -339,3 +342,31 @@ class GptTransfomer(pl.LightningModule):
         )
         self.log("train_loss", loss)
         return loss
+
+
+# Test forward pass works.
+if __name__ == "__main__":
+    batch_size: int = 10
+    block_size: int = 10
+    vocab_size: int = 100
+    network: GptTransfomer = GptTransfomer(
+        vocab_size=vocab_size,
+        weight_decay=0.1,
+        betas=(0.9, 0.95),
+        learning_rate=3e-4,
+        n_embedding_dims=12,
+        block_size=block_size,
+        embedding_drop_probability=0.1,
+        n_layers=2,
+        n_attention_heads=4,
+        residual_drop_probability=0.1,
+        self_attention_drop_probability=0.1,
+    )
+    x: torch.Tensor = torch.randint(0, vocab_size, size=(batch_size, block_size))
+    logits: torch.Tensor = network(x)
+    assert logits.shape == (batch_size, block_size, vocab_size)
+    # Assert there are no NaNs in the logits.
+    assert not torch.isnan(logits).any()
+    # Assert there are no infinities in the logits.
+    assert not torch.isinf(logits).any()
+    print("Test forward pass works.")
