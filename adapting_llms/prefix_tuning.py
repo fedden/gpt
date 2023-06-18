@@ -1,5 +1,4 @@
 import fnmatch
-import logger
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -160,21 +159,16 @@ class GptTransformerBlock(torch.nn.Module):
             torch.nn.Linear(n_embedding_dims, n_embedding_dims),
         )
 
-    def forward(self, x: torch.Tensor, soft_prompt: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, soft_prompt: torch.Tensor) -> torch.Tensor:
         """Forward pass the transformer block."""
-        # Collapse the soft_prompt tokens into the batch dimension.
-        #    (batch_size, n_soft_prompt_tokens, n_embedding_dims)
-        # -> (batch_size * n_soft_prompt_tokens, n_embedding_dims)
-        soft_prompt = soft_prompt.view(-1, soft_prompt.size(-1))
         projected_soft_prompt: torch.Tensor = self.prefix_mlp(soft_prompt)
-        # Reshape the soft prompt back to its original shape.
-        #    (batch_size * n_soft_prompt_tokens, n_embedding_dims)
-        # -> (batch_size, n_soft_prompt_tokens, n_embedding_dims)
-        projected_soft_prompt = projected_soft_prompt.view(
-            x.size(0), soft_prompt.size(1), soft_prompt.size(2)
+        # Tile the soft prompt to match the batch size.
+        batch_size: int = x.shape[0]
+        tiled_projected_soft_prompt: torch.Tensor = torch.tile(
+            projected_soft_prompt, (batch_size, 1, 1)
         )
         # Concat the soft prompt to the input.
-        x = torch.cat([projected_soft_prompt, x], dim=1)
+        x = torch.cat([tiled_projected_soft_prompt, x], dim=1)
         # Norm `x` before feeding to self-attention (see GPT-2 for this)
         layer_norm_0_x: torch.Tensor = self.layer_norm_0(x)
         # Self attention with residual connection.
@@ -183,10 +177,9 @@ class GptTransformerBlock(torch.nn.Module):
         layer_norm_1_x: torch.Tensor = self.layer_norm_1(x)
         # MLP with residual connection.
         x = x + self.mlp(layer_norm_1_x)
-        # Split the soft prompt from the output otherwise it will be fed to the
-        # next block and the context will grow with each block.
+        # Slice out the soft prompt from the output.
         n_soft_prompt_tokens: int = soft_prompt.shape[1]
-        return x[:, n_soft_prompt_tokens:], soft_prompt
+        return x[:, n_soft_prompt_tokens:, :]
 
 
 class GptTransfomer(pl.LightningModule):
@@ -249,9 +242,12 @@ class GptTransfomer(pl.LightningModule):
                     mean=0.0,
                     std=0.02 / math.sqrt(2 * self.hparams.n_layers),
                 )
-        # Log the parameters.
-        n_parameters: int = sum(p.numel() for p in self.parameters())
-        logger.info(f"Number of parameters: {n_parameters}")
+        # Log the trainable parameters.
+        n_trainable_parameters: int = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(f"Number of trainable parameters: {n_trainable_parameters}")
+        # Log the total parameters.
+        n_total_parameters: int = sum(p.numel() for p in self.parameters())
+        print(f"Number of total parameters: {n_total_parameters}")
 
     def _init_weights(self, module: torch.nn.Module) -> None:
         """Initialize the weights."""
@@ -340,7 +336,8 @@ class GptTransfomer(pl.LightningModule):
         # Forward pass the transformer blocks. We feed in a shape of
         # (batch_size, block_size, n_embedding_dims) and get back a shape of
         # the same shape: (batch_size, block_size, n_embedding_dims).
-        x = self.blocks(x=x, soft_prompt=self.soft_prompt)
+        for block in self.blocks:
+            x = block(x=x, soft_prompt=self.soft_prompt)
         # Apply layer norm after last block (GPT-2 introduced this)
         x = self.layer_norm(x)
         # Project the `n_embedding_dims dimension (dim=2) of the transformer
@@ -368,3 +365,33 @@ class GptTransfomer(pl.LightningModule):
         )
         self.log("train_loss", loss)
         return loss
+
+
+# Test forward pass works.
+if __name__ == "__main__":
+    batch_size: int = 10
+    block_size: int = 10
+    vocab_size: int = 100
+    n_soft_prompt_tokens: int = 2
+    network: GptTransfomer = GptTransfomer(
+        vocab_size=vocab_size,
+        weight_decay=0.1,
+        betas=(0.9, 0.95),
+        learning_rate=3e-4,
+        n_embedding_dims=12,
+        block_size=block_size,
+        embedding_drop_probability=0.1,
+        n_layers=2,
+        n_attention_heads=4,
+        residual_drop_probability=0.1,
+        self_attention_drop_probability=0.1,
+        n_soft_prompt_tokens=n_soft_prompt_tokens,
+    )
+    x: torch.Tensor = torch.randint(0, vocab_size, size=(batch_size, block_size - n_soft_prompt_tokens))
+    logits: torch.Tensor = network(x)
+    assert logits.shape == (batch_size, block_size - n_soft_prompt_tokens, vocab_size)
+    # Assert there are no NaNs in the logits.
+    assert not torch.isnan(logits).any()
+    # Assert there are no infinities in the logits.
+    assert not torch.isinf(logits).any()
+    print("Test forward pass works.")
