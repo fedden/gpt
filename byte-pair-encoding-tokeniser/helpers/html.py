@@ -29,7 +29,7 @@ def render_corpus_as_token_html(corpus: str, token_merge_history: List["TokenPai
     token_strings, token_ids = tokenise(corpus, token_merge_history, vocab)
     corpus_html: str = to_html_text(token_strings)
     if token_merge_history:
-        header: str = f"<h1>Iteration {len(token_merge_history)}, merged '{token_merge_history[-1].token_a}' and '{token_merge_history[-1].token_b}'</h1>"
+        header: str = f"<h1>Iteration {len(token_merge_history)}, merged '{token_merge_history[-1].token_a}' and '{token_merge_history[-1].token_b}', vocab size: {len(vocab)}</h1>"
     else:
-        header = "<h1>Iteration 0, initial tokens</h1>"
+        header = f"<h1>Iteration 0, initial character-level tokens, vocab size: {len(vocab)}</h1>"
     return header + "<br/>" + corpus_html 
