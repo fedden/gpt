@@ -13,14 +13,14 @@ EMBEDDINGS_MODEL_NAME: str = "all-MiniLM-L6-v2"
 # Maximum token limit for the LLM model
 MODEL_N_CTX: int = 1000
 # The amount of chunks (sources) that will be used to answer a question
-TARGET_SOURCE_CHUNKS: int = 3
+TARGET_SOURCE_CHUNKS: int = 10
 # Where the documents are.
 SOURCE_DIRECTORY: str = "documents"
 # Debugble for loops..
 SINGLE_PROCESS: bool = True
 # Chunks to be embedded.
-CHUNK_SIZE: int = 300
-CHUNK_OVERLAP: int = 50
+CHUNK_SIZE: int = 500
+CHUNK_OVERLAP: int = 100
 # Define the Chroma settings
 CHROMA_SETTINGS = Settings(
     chroma_db_impl="duckdb+parquet",
