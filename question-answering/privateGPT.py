@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import torch
 from langchain.chains import RetrievalQAWithSourcesChain
 from langchain.embeddings import HuggingFaceEmbeddings
