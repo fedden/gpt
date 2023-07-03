@@ -28,6 +28,16 @@ def max(x: Scalar, y: Scalar) -> Scalar:
     return x.max(y)
 
 
+def min(x: Scalar, y: Scalar) -> Scalar:
+    """Compute the minimum of two scalars."""
+    return x.min(y)
+
+
+def clip(x: Scalar, min_value: float, max_value: float) -> Scalar:
+    """Clip the value of a scalar between a minimum and a maximum value."""
+    return x.clip(min_value, max_value)
+
+
 def sigmoid(x: Scalar) -> Scalar:
     """Compute the sigmoid of a scalar."""
     return x.sigmoid()
@@ -48,6 +58,8 @@ def exp(x: Scalar) -> Scalar:
     return x.exp()
 
 
-def log(x: Scalar) -> Scalar:
+def log(x: Scalar, safe: bool = False) -> Scalar:
     """Compute the natural logarithm of a scalar."""
+    if safe:
+        return x.max(1e-9).log()
     return x.log()

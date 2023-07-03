@@ -19,6 +19,9 @@ class Optimiser(abc.ABC):
         """Zero the gradients of the optimiser."""
         for param in self.params:
             param.grad = 0.0
+        # TODO(leon):
+        #   Set all other gradients to zero, including those that are not
+        #   tracked by the optimiser, for all Scalars in the graph.
 
 
 class SGDOptimiser(Optimiser):
