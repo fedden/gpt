@@ -4,7 +4,7 @@ from typing import Any, List, Optional, Type, Tuple, Union
 
 import numpy as np
 
-from ag.op import Add, Mul, Op, Pow, Exp, Sigmoid, Tanh, Log, Sub, Max, Min, GreaterThan
+from ag.op.scalar import Add, Mul, Op, Pow, Exp, Sigmoid, Tanh, Log, Sub, Max, Min, GreaterThan
 
 
 Number = Union[float, int]
