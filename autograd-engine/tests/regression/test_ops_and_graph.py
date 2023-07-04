@@ -56,8 +56,8 @@ def test_forward_backward_against_torch_diamond(
         ag_d.backward()
     if verbose:
         print("AG")
-        for t in [ag_a, ag_b, ag_c, ag_d]:
-            print(f"value: {t.data:12.8f}, grad: {t.grad:12.8f}, name: {t.name}")
+        for s in [ag_a, ag_b, ag_c, ag_d]:
+            print(f"value: {s.data:12.8f}, grad: {s.grad:12.8f}, name: {s.name}")
     assert np.isclose(
         ag_a.grad, torch_a.grad.tolist()
     ), f"ag_a.grad ({ag_a.grad}) != torch_a.grad ({torch_a.grad.tolist()})"
@@ -119,8 +119,8 @@ def test_forward_backward_against_torch(a: float, b: float) -> None:
         traceback.print_exc()
         ag_h.backward()
     print("AG")
-    for t in [ag_a, ag_b, ag_c, ag_d, ag_e, ag_f, ag_g, ag_h]:
-        print(f"value: {t.data:12.8f}, grad: {t.grad:12.8f}, name: {t.name}")
+    for s in [ag_a, ag_b, ag_c, ag_d, ag_e, ag_f, ag_g, ag_h]:
+        print(f"value: {s.data:12.8f}, grad: {s.grad:12.8f}, name: {s.name}")
     assert np.isclose(ag_a.grad, torch_a.grad.tolist())
     assert np.isclose(ag_h.data, torch_h.data.tolist())
 
