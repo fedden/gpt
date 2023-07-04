@@ -17,7 +17,7 @@ from ag.ascii import render_as_tree
     "b", [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0, np.pi, np.e, np.sqrt(2)]
 )
 @pytest.mark.parametrize("verbose", [False])
-def regression_test_forward_backward_against_torch_diamond(
+def test_forward_backward_against_torch_diamond(
     a: float, b: float, verbose: bool
 ) -> None:
     """Test forward and backward pass against torch, with one node being used twice."""
@@ -72,7 +72,7 @@ def regression_test_forward_backward_against_torch_diamond(
 @pytest.mark.parametrize(
     "b", [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0, np.pi, np.e, np.sqrt(2)]
 )
-def regression_test_forward_backward_against_torch(a: float, b: float) -> None:
+def test_forward_backward_against_torch(a: float, b: float) -> None:
     """Test forward and backward pass against torch."""
     torch_a = torch.nn.Parameter(torch.tensor(a))
     torch_b = torch.tensor(b)
@@ -128,7 +128,7 @@ def regression_test_forward_backward_against_torch(a: float, b: float) -> None:
 @pytest.mark.parametrize("a", [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0])
 @pytest.mark.parametrize("op", ["tanh", "sigmoid", "exp"])
 @pytest.mark.parametrize("verbose", [False])
-def regression_test_forward_backward_against_torch_simple(
+def test_forward_backward_against_torch_simple(
     a: float, op: str, verbose: bool,
 ) -> None:
     """Test forward and backward pass against torch."""

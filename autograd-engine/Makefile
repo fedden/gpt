@@ -22,6 +22,8 @@ init: check
 	pyenv local $(PYENV_VERSION)
 	# Create the virtual environment.
 	python -m venv .venv
+	# Activate the virtual environment.
+	. .venv/bin/activate
 	# Install the requirements.
 	pip install -r requirements.txt
 	# Install ag.
