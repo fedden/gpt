@@ -5,6 +5,7 @@ from typing import Any
 from ag.scalar import Parameter, Scalar
 
 __all__ = ["Parameter", "Scalar", "max"]
+LOG_EPSILON: float = 1e-12
 
 
 def isclose(x: Any, y: Any, *, rel_tol: float = 1e-9, abs_tol: float = 0.0) -> bool:
@@ -61,5 +62,5 @@ def exp(x: Scalar) -> Scalar:
 def log(x: Scalar, safe: bool = False) -> Scalar:
     """Compute the natural logarithm of a scalar."""
     if safe:
-        return x.max(1e-9).log()
+        return x.max(LOG_EPSILON).log()
     return x.log()

@@ -35,14 +35,14 @@ class Scalar:
         self.grad: float = 0.0
         self.name: Optional[str] = name
         if _child_nodes is None:
-            self._child_nodes = []
+            self._child_nodes: List[Scalar] = []
         else:
             assert isinstance(_child_nodes, list), "_child_nodes must be a list."
             assert all(
                 isinstance(node, Scalar) for node in _child_nodes
             ), "_child_nodes must be a list of Scalars."
             self._child_nodes = _child_nodes
-        self._op_type = _op_type
+        self._op_type: Optional[Type[Op]] = _op_type
 
     @staticmethod
     def _to_scalar(x: AcceptedInput) -> Scalar:
@@ -139,8 +139,6 @@ class Scalar:
 
     def exp(self) -> Scalar:
         """Compute the exponential of a scalar."""
-        #  e: Scalar = Scalar(math.e)
-        #  return Scalar(data=Pow(e, self).forward(), _child_nodes=[e, self], _op_type=Pow)
         return Scalar(data=Exp(self).forward(), _child_nodes=[self], _op_type=Exp)
 
     def sigmoid(self) -> Scalar:
@@ -159,42 +157,41 @@ class Scalar:
 
     def log(self) -> Scalar:
         """Compute the natural logarithm of a scalar."""
-        # The base of the natural logarithm.
-        #  e: Scalar = Scalar(math.e)
-        #  return Scalar(data=Log(self, e).forward(), _child_nodes=[self, e], _op_type=Log)
         return Scalar(data=Log(self).forward(), _child_nodes=[self], _op_type=Log)
 
-    def backward(
-        self,
-        grad: Optional[float] = None,
-        _first_node: bool = True,
-    ) -> None:
+    def backward(self, grad: Optional[float] = None) -> None:
         """Backward pass through the graph."""
         # If this is the first node, set the gradient to 1.0.
-        if _first_node:
+        if grad is None:
             # Set the gradient for the first node to 1.0 because the gradient
             # of a scalar with respect to itself is 1.0.
             grad = self.grad = 1.0
         else:
-            # Otherwise, add to the existing gradient.
-            assert grad is not None, "Previous node's gradient must be defined."
             # Only add to the gradient if the node requires a gradient.
             self.grad += grad
         # If this is a leaf node, we're done.
         if self.is_leaf_node():
             # This is a leaf node.
             return
-        # Otherwise, this is an internal node.
+        # Otherwise, this is an internal node, and an operation must have been
+        # performed on the child nodes.
         assert self._op_type is not None, "Operation type must be defined."
+        # Create the operation, passing in the child nodes. We will use this
+        # operation to compute the gradient for each child node.
         op: Op = self._op_type(*self._child_nodes)  # type: ignore
-        # Propagate the gradient to each child node. First, compute the
-        # gradient for each child node, this function may return one or a tuple
-        # of gradients, depending on the operation, so we need to handle both
-        # cases by converting the result to a tuple.
+        # First, compute the gradient for each child node, this function may
+        # return one or a tuple of gradients, depending on the operation, so we
+        # need to handle both cases by converting the result to a tuple.
         child_grads: Tuple[float, ...] = _wrap_as_tuple(op.backward(grad))
-        # Backward pass through each child node.
+        # Ensure the op is implemented correctly, or atleast that it returns
+        # the correct number of gradients.
+        assert len(child_grads) == len(self._child_nodes), (
+            f"Expected {len(self._child_nodes)} gradients, "
+            f"but got {len(child_grads)}, for operation {op}."
+        )
+        # Propagate the gradient to each child node.
         for child_node, child_grad in zip(self._child_nodes, child_grads):
-            child_node.backward(child_grad, _first_node=False)
+            child_node.backward(child_grad)
 
 
 class Parameter(Scalar):

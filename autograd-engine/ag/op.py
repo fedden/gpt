@@ -112,14 +112,14 @@ class Pow(Op):
 
     NAME: str = "**"
 
-    def __init__(self, x: "Scalar", y: "Scalar"):
+    def __init__(self, base: "Scalar", exponent: "Scalar"):
         """Initialize an operation."""
-        self.x = x
-        self.y = y
+        self.base = base
+        self.exponent = exponent
 
     def forward(self) -> Number:
         """Forward pass of the operation."""
-        return self.x.data**self.y.data
+        return self.base.data**self.exponent.data
 
     def backward(self, grad: Number) -> Tuple[Number, Number]:
         """Backward pass of the operation.
@@ -130,10 +130,21 @@ class Pow(Op):
             The gradient of the loss with respect to the output of the
             operation.
         """
-        return (
-            grad * self.y.data * self.x.data ** (self.y.data - 1),
-            grad * math.log(self.x.data) * self.x.data**self.y.data,
+        grad_base: Number = (
+            grad * self.exponent.data * self.base.data ** (self.exponent.data - 1)
         )
+        if self.base.data > 0:
+            grad_exponent: Number = (
+                grad * self.base.data**self.exponent.data * math.log(self.base.data)
+            )
+        else:
+            # If the base is negative or zero, the gradient for the exponent
+            # would be a complex number. We set it to NaN to indicate that it
+            # is not defined, rather than raising an exception, and hopefully
+            # the user will notice that something is wrong and fix their usage
+            # of the library.
+            grad_exponent = float("nan")
+        return grad_base, grad_exponent
 
 
 class Exp(Op):
@@ -262,7 +273,7 @@ class Max(Op):
         """Forward pass of the operation."""
         return max(self.x.data, self.y.data)
 
-    def backward(self, grad: Number) -> Number:
+    def backward(self, grad: Number) -> Tuple[Number, Number]:
         """Backward pass of the operation.
 
         Parameters
@@ -271,7 +282,10 @@ class Max(Op):
             The gradient of the loss with respect to the output of the
             operation.
         """
-        return grad if self.x.data > self.y.data else 0.0
+        if self.x.data > self.y.data:
+            return grad, 0.0
+        else:
+            return 0.0, grad
 
 
 class Min(Op):
@@ -288,7 +302,7 @@ class Min(Op):
         """Forward pass of the operation."""
         return min(self.x.data, self.y.data)
 
-    def backward(self, grad: Number) -> Number:
+    def backward(self, grad: Number) -> Tuple[Number, Number]:
         """Backward pass of the operation.
 
         Parameters
@@ -297,7 +311,10 @@ class Min(Op):
             The gradient of the loss with respect to the output of the
             operation.
         """
-        return grad if self.x.data < self.y.data else 0.0
+        if self.x.data < self.y.data:
+            return grad, 0.0
+        else:
+            return 0.0, grad
 
 
 class GreaterThan(Op):
@@ -314,7 +331,7 @@ class GreaterThan(Op):
         """Forward pass of the operation."""
         return 1.0 if self.x.data > self.y.data else 0.0
 
-    def backward(self, grad: Number) -> Number:
+    def backward(self, grad: Number) -> Tuple[Number, Number]:
         """Backward pass of the operation.
 
         Parameters
@@ -323,4 +340,4 @@ class GreaterThan(Op):
             The gradient of the loss with respect to the output of the
             operation.
         """
-        return 0.0
+        return 0.0, 0.0
