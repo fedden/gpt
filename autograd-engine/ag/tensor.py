@@ -1,11 +1,12 @@
 """A nD tensor class for automatic differentiation of scalar functions."""
 from __future__ import annotations
-import copy
+import itertools
 import math
 from typing import List, Optional, Tuple, Type, Union
 
 import numpy as np
 
+import ag
 from ag import Scalar
 
 AcceptedInput = Union[Scalar, float, int, list, np.ndarray]
@@ -34,7 +35,7 @@ class Tensor:
     ):
         """Initialize a nD tensor with a value and a gradient."""
         if isinstance(data, Tensor):
-            self.data: List[Scalar] = copy.deepcopy(data.data)
+            self.data: List[Scalar] = data.data
         elif isinstance(data, np.ndarray):
             self.data = [Scalar(x, requires_grad=requires_grad) for x in data.flatten()]
         elif isinstance(data, list):
@@ -90,34 +91,82 @@ class Tensor:
         body: str = ", ".join(elements)
         return f"{object_type}({body})"
 
+    def _int_to_slice(self, index: int, dim: int) -> slice:
+        """Convert an integer index to a slice."""
+        assert isinstance(index, int), "Index must be an integer."
+        assert index < self.shape[dim], "Index out of bounds."
+        return slice(index, index + 1, 1)
+
+    def _int_to_tuple(self, index: int) -> tuple:
+        """Convert an integer index to a tuple."""
+        assert isinstance(index, int), "Index must be an integer."
+        assert index < self.shape[0], "Index out of bounds."
+        # Index the first dimension, and return slice objects for the rest.
+        return (self._int_to_slice(index, dim=0),) + (slice(None, None, None),) * (
+            len(self.shape) - 1
+        )
+
+    def _slice_to_tuple(self, index: slice) -> tuple:
+        """Convert a slice index to a tuple."""
+        assert isinstance(index, slice), "Index must be a slice."
+        return (index,) + (slice(None, None, None),) * (len(self.shape) - 1)
+
     def __getitem__(self, key: Union[int, slice, tuple]) -> Tensor:
         """Return a subset of the tensor."""
+        # Normalize the index to a tuple of slices.
         if isinstance(key, int):
-            assert key < len(self.data), "Index out of bounds."
-            return Tensor(
-                data=self.data[key],
-                shape=(1,),
-                requires_grad=self.requires_grad,
-                name=self.name,
-            )
+            per_dim_slice = self._int_to_tuple(key)
         elif isinstance(key, slice):
-            return Tensor(
-                data=self.data[key],
-                shape=self.shape[key],
-                requires_grad=self.requires_grad,
-                name=self.name,
-            )
+            per_dim_slice = self._slice_to_tuple(key)
         elif isinstance(key, tuple):
-            assert len(key) == len(self.shape), "Invalid number of dimensions."
-            assert all(isinstance(x, (int, slice)) for x in key), "Invalid index type."
-            return Tensor(
-                data=self.data[key],
-                shape=self.shape[key],
-                requires_grad=self.requires_grad,
-                name=self.name,
+            per_dim_slice = tuple(
+                self._int_to_slice(x, dim=dim) if isinstance(x, int) else x
+                for dim, x in enumerate(key)
             )
         else:
             raise TypeError("Invalid index type.")
+        # Help with type checking.
+        assert isinstance(
+            per_dim_slice, tuple
+        ), f"Invalid index type {type(per_dim_slice)}."
+        assert all(
+            isinstance(x, slice) for x in per_dim_slice
+        ), f"Invalid index type {per_dim_slice}."
+        assert len(per_dim_slice) == len(self.shape), "Invalid number of dimensions."
+        # Convert the slice to a list of slices.
+        int_slices: list[slice] = [
+            dim_slice.indices(dim_size)
+            for dim_slice, dim_size in zip(per_dim_slice, self.shape)
+        ]
+        int_ranges: list[range] = [
+            range(start, stop, step) for start, stop, step in int_slices
+        ]
+        # Get the strides for each dimension.
+        per_dim_strides: list[int] = [1] * len(self.shape)
+        for i in range(len(self.shape) - 2, -1, -1):
+            per_dim_strides[i] = per_dim_strides[i + 1] * self.shape[i + 1]
+        sliced_data: list[Scalar] = []
+        # Apply the slice to each dimension.
+        for multi_dim_i in itertools.product(*int_ranges):
+            # Convert the multi-dimensional index to a single index.
+            single_dim_i: int = sum(
+                multi_dim_i[i] * per_dim_strides[i] for i in range(self.ndim)
+            )
+            sliced_data.append(self.data[single_dim_i])
+        # Compute the shape of the sliced tensor.
+        sliced_shape_list: list[int] = [
+            math.ceil((stop - start) / end)  # type: ignore
+            for (start, stop, end) in int_slices
+        ]
+        # Remove any dimensions of size 1.
+        sliced_shape: tuple[int, ...] = tuple(x for x in sliced_shape_list if x != 1)
+        # Create a new tensor with the sliced data.
+        return Tensor(
+            data=sliced_data,
+            shape=sliced_shape,
+            requires_grad=self.requires_grad,
+            name=self.name,
+        )
 
     def broadcast_to_shape(self, shape: Tuple[int, ...]) -> Tensor:
         """Broadcast the tensor to a new shape."""
@@ -241,9 +290,122 @@ class Tensor:
             _op_type="neg",
         )
 
+    @staticmethod
+    def _vector_dot(l: Tensor, r: Tensor) -> Scalar:
+        """Compute the dot product of two vectors."""
+        assert l.shape == r.shape, f"Cannot compute dot product of {l.shape} and {r.shape}."
+        assert l.ndim == 1
+        assert r.ndim == 1
+        return ag.sum([x * y for x, y in zip(l.data, r.data)])
+
+    @classmethod
+    def from_scalar(cls, scalar: Scalar) -> Tensor:
+        """Create a tensor from a scalar."""
+        return Tensor(
+            data=[scalar],
+            shape=(1,),
+            requires_grad=scalar.requires_grad,
+            _child_nodes=[],
+            _op_type="scalar",
+        )
+
+
     def __matmul__(self, other: AcceptedInput) -> Tensor:
         """Multiply two tensors."""
-        breakpoint()
+        l = self
+        if isinstance(other, Tensor):
+            r = other
+        else:
+            r = Tensor(data=other)
+        if l.ndim == 1 and r.ndim == 1:
+            return self._vector_dot(l, r)
+        elif l.ndim == 2 and r.ndim == 1:
+            assert l.shape[1] == r.shape[0]
+            assert l.shape[0] == 1
+            dot_product: Scalar = self._vector_dot(l.flatten(), r)
+            return self.from_scalar(dot_product)
+        elif l.ndim == 1 and r.ndim == 2:
+            assert l.shape[0] == r.shape[0]
+            assert r.shape[1] == 1
+            dot_product: Scalar = self._vector_dot(l, r.flatten())
+            return self.from_scalar(dot_product)
+        elif l.ndim >= 2 and r.ndim >= 2:
+            # For 2D tensors, e.g with shape (2, 3) and (3, 4), we need to do
+            # the following:
+            # 1. Take the dot product of each row of the left tensor with each
+            #    column of the right tensor.
+            # 2. Stack the resulting vectors into a new tensor.
+            # For example, if we have:
+            # l = [[1, 2, 3], [4, 5, 6]]
+            # r = [[7, 8], [9, 10], [11, 12]]
+            # Then we need to do:
+            # l[0] dot r[:, 0] = [1, 2, 3] dot [7, 9, 11] = 1 * 7 + 2 * 9 + 3 * 11
+            # l[0] dot r[:, 1] = [1, 2, 3] dot [8, 10, 12] = 1 * 8 + 2 * 10 + 3 * 12
+            # l[1] dot r[:, 0] = [4, 5, 6] dot [7, 9, 11] = 4 * 7 + 5 * 9 + 6 * 11
+            # l[1] dot r[:, 1] = [4, 5, 6] dot [8, 10, 12] = 4 * 8 + 5 * 10 + 6 * 12
+            # And then stack the resulting vectors into a new tensor:
+            # [[1 * 7 + 2 * 9 + 3 * 11, 1 * 8 + 2 * 10 + 3 * 12],
+            #  [4 * 7 + 5 * 9 + 6 * 11, 4 * 8 + 5 * 10 + 6 * 12]]
+            #
+            # For tensors with more than 2 dimensions, we need to do the same
+            # thing, but for each "slice" of the tensor along each of the
+            # proceeding dimensions.
+
+            # Old code that only did the above for 2D tensors:
+            #  assert l.shape[-1] == r.shape[-2]
+            #  out_shape = (*l.shape[:-1], r.shape[-1])
+            #  out_data: list[Scalar] = [None] * (out_shape[0] * out_shape[1])  # type: ignore
+            #  for i in range(l.shape[1]):
+            #      vector_product: list[Scalar] = self._vector_dot(l[:, i], r[i, :]).data
+            #      for j in range(len(vector_product)):
+            #          out_data[j * out_shape[1] + i] = vector_product[j]
+            #  return Tensor(
+            #      data=out_data,
+            #      shape=out_shape,
+            #      requires_grad=l.requires_grad or r.requires_grad,
+            #      _child_nodes=[l, r],
+            #      _op_type="matmul",
+            #  )
+
+            # New code that does the above for tensors with any number of
+            # dimensions:
+            assert l.shape[-1] == r.shape[-2]
+            out_shape = (*l.shape[:-1], r.shape[-1])
+            # Collapse all dimensions except the last two into a single
+            # dimension, so that we can treat the tensor as a 2D tensor.
+            l = l.reshape(-1, l.shape[-2], l.shape[-1])
+            r = r.reshape(-1, r.shape[-2], r.shape[-1])
+            out_data: list[Scalar] = [None] * math.prod(out_shape)  # type: ignore
+            # For each slice of the tensor along the first dimension, take the
+            # dot product of each row of the left tensor with each column of
+            # the right tensor, and stack the resulting vectors into a new
+            # tensor. The shapes of the tensors are:
+            # l: (n_slices, n, m)
+            # r: (n_slices, m, p)
+            # out: (n_slices, n, p)
+            n_slices = l.shape[0]
+            n_rows = l.shape[1]
+            n_cols = r.shape[2]
+            for slice_i in range(n_slices):
+                for row_i in range(n_rows):
+                    for col_i in range(n_cols):
+                        l_vector: Tensor = l[slice_i, row_i, :]
+                        r_vector: Tensor = r[slice_i, :, col_i]
+                        dot_product: Scalar = self._vector_dot(l_vector, r_vector)
+                        # The following line is equivalent to:
+                        # out_data[slice_i, row_i, col_i] = dot_product
+                        out_data[slice_i * n_rows * n_cols + row_i * n_cols + col_i] = dot_product
+            return Tensor(
+                data=out_data,
+                shape=out_shape,
+                requires_grad=l.requires_grad or r.requires_grad,
+                _child_nodes=[l, r],
+                _op_type="matmul",
+            )
+        else:
+            raise ValueError(
+                f"Cannot perform matrix multiplication on tensors with shapes {l.shape} and {r.shape}."
+            )
 
     def numpy(self) -> np.ndarray:
         """Return the tensor as a numpy array."""
@@ -253,6 +415,11 @@ class Tensor:
     def size(self) -> int:
         """Return the number of elements in the tensor."""
         return len(self.data)
+
+    @property
+    def ndim(self) -> int:
+        """Return the number of dimensions in the tensor."""
+        return len(self.shape)
 
     def tile(self, reps: List[int]) -> Tensor:
         """Tile the tensor."""
@@ -297,6 +464,10 @@ class Tensor:
             name=self.name,
         )
 
+    def flatten(self) -> Tensor:
+        """Flatten the tensor."""
+        return self.reshape(-1)
+
     def repeat(self, repeats: int) -> Tensor:
         """Repeat each element of the tensor after themselves."""
         assert isinstance(repeats, int), "repeats must be an int."
@@ -305,7 +476,7 @@ class Tensor:
         new_data = [None] * new_shape[0]
         for i in range(self.size):
             for j in range(repeats):
-                new_data[i * repeats + j] = copy.deepcopy(self.data[i])  # type: ignore
+                new_data[i * repeats + j] = self.data[i]  # type: ignore
         return Tensor(
             data=new_data,
             shape=new_shape,

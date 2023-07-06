@@ -1,10 +1,9 @@
 """A module for automatic differentiation of scalar functions."""
 import math
-from typing import Any
+from typing import Any, List, Union
 
 from ag.scalar import Parameter, Scalar
 
-__all__ = ["Parameter", "Scalar", "max"]
 LOG_EPSILON: float = 1e-12
 
 
@@ -32,6 +31,18 @@ def max(x: Scalar, y: Scalar) -> Scalar:
 def min(x: Scalar, y: Scalar) -> Scalar:
     """Compute the minimum of two scalars."""
     return x.min(y)
+
+
+def sum(*args: Union[List[Scalar], Scalar]) -> Scalar:
+    """Compute the sum of a variable number of scalars."""
+    if len(args) == 0:
+        raise ValueError("sum() requires at least one argument")
+    elif len(args) == 1 and isinstance(args[0], (list, tuple)):
+        args = args[0]
+    total: Scalar = Scalar(0.0)
+    for s in args:
+        total += s
+    return total
 
 
 def clip(x: Scalar, min_value: float, max_value: float) -> Scalar:
