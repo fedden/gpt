@@ -9,6 +9,8 @@ import numpy as np
 import ag
 from ag import Scalar
 
+SCALAR_SHAPE: Tuple[int, ...] = tuple()
+
 AcceptedInput = Union[Scalar, float, int, list, np.ndarray]
 
 
@@ -43,7 +45,6 @@ class Tensor:
         else:
             self.data = [Scalar(data, requires_grad=requires_grad)]
         self.requires_grad: bool = requires_grad
-        self.grad: List[float] = [0.0] * len(self.data)
         self.name: Optional[str] = name
         if shape is None:
             self.shape: Tuple[int, ...] = self._infer_shape(data)
@@ -52,6 +53,11 @@ class Tensor:
         assert len(self.data) == math.prod(
             self.shape
         ), f"Shape {self.shape} does not match data length {len(self.data)}."
+        if requires_grad:
+            # TODO(leonfedden): Handle 2nd/3rd order gradients - recursion?
+            self.grad: List[float] = Tensor(
+                [0.0] * len(self.data), shape=self.shape, requires_grad=False
+            )
         if _child_nodes is None:
             self._child_nodes: List[Tensor] = []
         else:
@@ -76,7 +82,7 @@ class Tensor:
                 shape.append(len(x))
                 x = x[0]
             return tuple(shape)
-        return (1,)
+        return SCALAR_SHAPE
 
     def is_leaf_node(self) -> bool:
         """Return True if the node is a leaf node."""
@@ -293,10 +299,12 @@ class Tensor:
     @staticmethod
     def _vector_dot(l: Tensor, r: Tensor) -> Scalar:
         """Compute the dot product of two vectors."""
-        assert l.shape == r.shape, f"Cannot compute dot product of {l.shape} and {r.shape}."
+        assert (
+            l.shape == r.shape
+        ), f"Cannot compute dot product of {l.shape} and {r.shape}."
         assert l.ndim == 1
         assert r.ndim == 1
-        return ag.sum([x * y for x, y in zip(l.data, r.data)])
+        return ag.scalar.sum([x * y for x, y in zip(l.data, r.data)])
 
     @classmethod
     def from_scalar(cls, scalar: Scalar) -> Tensor:
@@ -308,7 +316,6 @@ class Tensor:
             _child_nodes=[],
             _op_type="scalar",
         )
-
 
     def __matmul__(self, other: AcceptedInput) -> Tensor:
         """Multiply two tensors."""
@@ -394,7 +401,9 @@ class Tensor:
                         dot_product: Scalar = self._vector_dot(l_vector, r_vector)
                         # The following line is equivalent to:
                         # out_data[slice_i, row_i, col_i] = dot_product
-                        out_data[slice_i * n_rows * n_cols + row_i * n_cols + col_i] = dot_product
+                        out_data[
+                            slice_i * n_rows * n_cols + row_i * n_cols + col_i
+                        ] = dot_product
             return Tensor(
                 data=out_data,
                 shape=out_shape,
@@ -513,6 +522,84 @@ class Tensor:
             _child_nodes=[self],
             _op_type="relu",
         )
+
+    def mean(self, axis: Optional[int] = None) -> Tensor:
+        """Compute the mean of the tensor."""
+        if axis is None:
+            # Compute the mean over all axes.
+            return Tensor(
+                data=ag.scalar.sum(self.data) / self.size,
+                shape=SCALAR_SHAPE,
+                requires_grad=self.requires_grad,
+                _child_nodes=[self],
+                _op_type="mean",
+            )
+        elif isinstance(axis, int):
+            assert 0 <= axis < len(self.shape), "axis out of bounds."
+            new_shape = tuple(x for i, x in enumerate(self.shape) if i != axis)
+            new_data = []
+            for i in range(self.size // self.shape[axis]):
+                new_data.append(
+                    ag.scalar.sum(
+                        self.data[i * self.shape[axis] : (i + 1) * self.shape[axis]]
+                    )
+                    / self.shape[axis]
+                )
+            return Tensor(
+                data=new_data,
+                shape=new_shape,
+                requires_grad=self.requires_grad,
+                _child_nodes=[self],
+                _op_type="mean",
+            )
+        elif isinstance(axis, (list, tuple)):
+            assert all(isinstance(x, int) for x in axis), "axis must be a list of ints."
+            assert all(0 <= x < len(self.shape) for x in axis), "axis out of bounds."
+            new_shape = tuple(x for i, x in enumerate(self.shape) if i not in axis)
+            new_data = []
+            for i in range(self.size // math.prod([self.shape[x] for x in axis])):
+                new_data.append(
+                    ag.scalar.sum(
+                        self.data[
+                            i
+                            * math.prod([self.shape[x] for x in axis]) : (i + 1)
+                            * math.prod([self.shape[x] for x in axis])
+                        ]
+                    )
+                    / math.prod([self.shape[x] for x in axis])
+                )
+            return Tensor(
+                data=new_data,
+                shape=new_shape,
+                requires_grad=self.requires_grad,
+                _child_nodes=[self],
+                _op_type="mean",
+            )
+        else:
+            raise TypeError("axis must be an int or a list of ints.")
+
+    @property
+    def grad(self) -> Tensor:
+        """Return the gradient of the tensor."""
+        assert self.requires_grad, "This tensor does not require gradients."
+        return self._grad
+
+    @grad.setter
+    def grad(self, value: Tensor) -> None:
+        """Set the gradient of the tensor."""
+        assert self.requires_grad, "This tensor does not require gradients."
+        assert (
+            value.shape == self.shape
+        ), f"Gradient shape {value.shape} does not match tensor shape {self.shape}."
+        self._grad = value
+
+    def backward(self):
+        """Backpropagate the gradient through the graph."""
+        # First ensure we have a scalar.
+        assert (
+            self.shape == SCALAR_SHAPE
+        ), f"Cannot backpropagate through a tensor of shape {self.shape}."
+        self.data[0].backward()
 
 
 def _to_elementwise_op_tensor(x: Tensor, y: AcceptedInput):

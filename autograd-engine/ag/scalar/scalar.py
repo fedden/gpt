@@ -25,24 +25,29 @@ class Scalar:
         """Initialize a scalar value with a gradient."""
         if isinstance(data, Scalar):
             self.data: float = data.data
+            self._child_nodes = data._child_nodes
+            self.requires_grad = data.requires_grad
+            self.name = data.name
+            self.grad = data.grad
+            self._op_type = data._op_type
         else:
             # Check data type is numeric.
             assert isinstance(
                 data, (float, int, np.integer, np.floating)
             ), f"Invalid data type: {type(data)}"
             self.data = float(data)
-        self.requires_grad: bool = requires_grad
-        self.grad: float = 0.0
-        self.name: Optional[str] = name
-        if _child_nodes is None:
-            self._child_nodes: List[Scalar] = []
-        else:
-            assert isinstance(_child_nodes, list), "_child_nodes must be a list."
-            assert all(
-                isinstance(node, Scalar) for node in _child_nodes
-            ), "_child_nodes must be a list of Scalars."
-            self._child_nodes = _child_nodes
-        self._op_type: Optional[Type[Op]] = _op_type
+            self.requires_grad: bool = requires_grad
+            self.grad: float = 0.0
+            self.name: Optional[str] = name
+            if _child_nodes is None:
+                self._child_nodes: List[Scalar] = []
+            else:
+                assert isinstance(_child_nodes, list), "_child_nodes must be a list."
+                assert all(
+                    isinstance(node, Scalar) for node in _child_nodes
+                ), "_child_nodes must be a list of Scalars."
+                self._child_nodes = _child_nodes
+            self._op_type: Optional[Type[Op]] = _op_type
 
     @staticmethod
     def _to_scalar(x: AcceptedInput) -> Scalar:

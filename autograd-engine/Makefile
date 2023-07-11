@@ -28,9 +28,9 @@ init: check
 	@# Activate the virtual environment.
 	@. .venv/bin/activate
 	@# Install the requirements.
-	@pip install -r requirements.txt
+	@python -m pip install -r requirements.txt
 	@# Install ag.
-	@pip install -e .
+	@python -m pip install -e .
 
 # Add recipe for running the tests.
 test: use_env
