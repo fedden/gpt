@@ -10,7 +10,7 @@ def hinge(y_true: Scalar, y_pred: Scalar) -> Scalar:
 
 def mse(y_true: Scalar, y_pred: Scalar) -> Scalar:
     """Compute the mean squared error."""
-    return (y_true - y_pred) ** 2
+    return ag.mean((y_true - y_pred) ** 2)
 
 
 def binary_cross_entropy(y_true: Scalar, y_pred: Scalar) -> Scalar:
