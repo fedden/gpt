@@ -1,6 +1,6 @@
 """A module for automatic differentiation of scalar functions."""
 import math
-from typing import Any, List, Union
+from typing import Any
 
 from ag import ascii
 from ag import loss
@@ -24,6 +24,22 @@ def isclose(x: Any, y: Any, *, rel_tol: float = 1e-9, abs_tol: float = 0.0) -> b
     else:
         y_float = y
     return math.isclose(x_float, y_float, rel_tol=rel_tol, abs_tol=abs_tol)
+
+
+def _fill_like(x: Tensor, value: float) -> Tensor:
+    """Value `value` in tensor like `x`."""
+    data = [value] * x.size
+    return Tensor(data, shape=x.shape)
+
+
+def zeros_like(x: Tensor) -> Tensor:
+    """Zeros like `x`."""
+    return _fill_like(x, 0.0)
+
+
+def ones_like(x: Tensor) -> Tensor:
+    """Ones like `x`."""
+    return _fill_like(x, 1.0)
 
 
 def max(x: Scalar, y: Scalar) -> Scalar:

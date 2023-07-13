@@ -39,14 +39,21 @@ class Tensor:
         if isinstance(data, Tensor):
             self.data: List[Scalar] = data.data
         elif isinstance(data, np.ndarray):
-            self.data = [Scalar(x, requires_grad=requires_grad) for x in data.flatten()]
+            self.data = [
+                x if isinstance(x, Scalar) else Scalar(x, requires_grad=requires_grad)
+                for x in data.flatten()
+            ]
         elif isinstance(data, (list, tuple)):
             self.data = [
                 x if isinstance(x, Scalar) else Scalar(x, requires_grad=requires_grad)
                 for x in flatten(data)
             ]
         else:
-            self.data = [Scalar(data, requires_grad=requires_grad)]
+            self.data = [
+                data
+                if isinstance(data, Scalar)
+                else Scalar(data, requires_grad=requires_grad)
+            ]
         if shape is None:
             self.shape: Tuple[int, ...] = self._infer_shape(data)
         else:
@@ -570,6 +577,11 @@ class Tensor:
             self.size == 1
         ), f"Cannot call backward on a non-scalar tensor of size {self.size}."
         self.data[0].backward()
+
+    def zero_grad(self):
+        """Zero any gradients."""
+        for scalar in self.data:
+            scalar.grad.data = 0.0
 
 
 def _to_elementwise_op_tensor(x: Tensor, y: AcceptedInput) -> tuple[Tensor, Tensor]:

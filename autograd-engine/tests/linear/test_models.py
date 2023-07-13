@@ -50,18 +50,19 @@ def test_train_linear_regression(
     )
     clf.fit(X, y)
     # The coefficients we are trying to learn.
-    w0 = Parameter(0.0)
-    w1 = Parameter(0.0)
-    b = Parameter(0.0)
+    w0 = ag.Tensor(0.0, requires_grad=True)
+    w1 = ag.Tensor(0.0, requires_grad=True)
+    b = ag.Tensor(0.0, requires_grad=True)
     optimiser = SGDOptimiser([w0, w1, b], lr=lr)
     last_cost: float = 0.0
     for _ in range(max_n_epochs):
+        optimiser.zero_grad()
         loss_sum: float = 0.0
         for i in range(len(X)):
-            x0 = Scalar(X[i, 0])
-            x1 = Scalar(X[i, 1])
+            x0 = ag.Tensor(X[i, 0])
+            x1 = ag.Tensor(X[i, 1])
             y_hat = x0 * w0 + x1 * w1 + b
-            loss = mse(Scalar(y[i]), y_hat) / len(X)
+            loss = mse(ag.Tensor(y[i]), y_hat) / len(X)
             try:
                 loss.backward()
             except Exception:
@@ -70,9 +71,10 @@ def test_train_linear_regression(
                 render_as_tree(loss)
                 breakpoint()
                 loss.backward()
-            loss_sum += loss.data
+            loss_sum += loss.numpy()
         # Cost is the average loss over all samples.
         cost: float = loss_sum / len(X)
+        breakpoint()
         if verbose:
             print(
                 f"cost={cost:.15f}, is {abs(cost - last_cost):.15f} < "
@@ -81,9 +83,8 @@ def test_train_linear_regression(
         if abs(cost - last_cost) < cost_delta_tol:
             break
         optimiser.step()
-        optimiser.zero_grad()
         last_cost = cost
-    our_params: List[float] = [w0.data, w1.data, b.data]
+    our_params: List[float] = [w0.numpy(), w1.numpy(), b.numpy()]
     sklearn_params: List[float] = [*clf.coef_.tolist(), clf.intercept_.tolist()]
     if verbose:
         print(f"our_params: {our_params}")
