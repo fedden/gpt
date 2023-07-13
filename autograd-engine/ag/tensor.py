@@ -2,14 +2,14 @@
 from __future__ import annotations
 import itertools
 import math
-from typing import List, Optional, Tuple, Type, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
 import ag
-from ag import Scalar
+from ag.scalar import Scalar
 
-SCALAR_SHAPE: Tuple[int, ...] = tuple()
+SCALAR_SHAPE: tuple[int, ...] = tuple()
 
 AcceptedInput = Union[Scalar, float, int, list, np.ndarray]
 
@@ -29,23 +29,24 @@ class Tensor:
     def __init__(
         self,
         data: AcceptedInput,
-        shape: Optional[Tuple[int, ...]] = None,
+        shape: Optional[tuple[int, ...]] = None,
         requires_grad: bool = False,
         name: Optional[str] = None,
-        _child_nodes: Optional[List[Tensor]] = None,
-        _op_type: Optional[Type["Uknown"]] = None,
+        _set_name: bool = True,
+        _child_nodes: Optional[list[Tensor]] = None,
     ):
         """Initialize a nD tensor with a value and a gradient."""
         if isinstance(data, Tensor):
             self.data: List[Scalar] = data.data
         elif isinstance(data, np.ndarray):
             self.data = [Scalar(x, requires_grad=requires_grad) for x in data.flatten()]
-        elif isinstance(data, list):
-            self.data = [Scalar(x, requires_grad=requires_grad) for x in flatten(data)]
+        elif isinstance(data, (list, tuple)):
+            self.data = [
+                x if isinstance(x, Scalar) else Scalar(x, requires_grad=requires_grad)
+                for x in flatten(data)
+            ]
         else:
             self.data = [Scalar(data, requires_grad=requires_grad)]
-        self.requires_grad: bool = requires_grad
-        self.name: Optional[str] = name
         if shape is None:
             self.shape: Tuple[int, ...] = self._infer_shape(data)
         else:
@@ -53,11 +54,6 @@ class Tensor:
         assert len(self.data) == math.prod(
             self.shape
         ), f"Shape {self.shape} does not match data length {len(self.data)}."
-        if requires_grad:
-            # TODO(leonfedden): Handle 2nd/3rd order gradients - recursion?
-            self.grad: List[float] = Tensor(
-                [0.0] * len(self.data), shape=self.shape, requires_grad=False
-            )
         if _child_nodes is None:
             self._child_nodes: List[Tensor] = []
         else:
@@ -66,27 +62,61 @@ class Tensor:
                 isinstance(node, Tensor) for node in _child_nodes
             ), "_child_nodes must be a list of Tensors."
             self._child_nodes = _child_nodes
-        self._op_type: Optional[Type[Op]] = _op_type
+        self.requires_grad: bool = requires_grad
+        self.name: Optional[str] = name
+
+    @property
+    def name(self) -> Optional[str]:
+        """Return the name of the tensor."""
+        return self._name
+
+    @name.setter
+    def name(self, name: Optional[str]) -> None:
+        """Set the name of the tensor."""
+        self._name = name
+        # Set the names of the scalar values.
+        if name is not None:
+            ranges = [range(dim) for dim in self.shape]
+            for nd_i in itertools.product(*ranges):
+                flattened_i: int = self._nd_i_to_1d_i(nd_i)
+                self.data[flattened_i].name = f"{name}{list(nd_i)}"
+
+    def _nd_i_to_1d_i(self, nd_i: tuple[int, ...]) -> int:
+        """Convert multi-dim indices to 1D index for `self.data`."""
+        assert len(nd_i) == len(self.shape), (
+            f"Number of indices ({len(nd_i)}) does not match number of "
+            f"dimensions ({len(self.shape)})."
+        )
+        index: int = 0
+        for dim, dim_i in enumerate(nd_i):
+            assert dim_i < self.shape[dim], (
+                f"Index {dim_i} is out of bounds for dimension {dim} with "
+                f"shape {self.shape[dim]}."
+            )
+            index *= self.shape[dim]
+            index += dim_i
+        return index
 
     @staticmethod
     def _infer_shape(x: AcceptedInput) -> Tuple[int, ...]:
         """Infer the shape of the tensor."""
         if isinstance(x, Tensor):
             return x.shape
-        if isinstance(x, np.ndarray):
+        elif isinstance(x, np.ndarray):
             return x.shape
-        if isinstance(x, list):
+        elif isinstance(x, list):
             # Handle nested lists.
             shape = []
             while isinstance(x, list):
                 shape.append(len(x))
                 x = x[0]
             return tuple(shape)
-        return SCALAR_SHAPE
+        else:
+            return SCALAR_SHAPE
 
     def is_leaf_node(self) -> bool:
         """Return True if the node is a leaf node."""
-        return len(self._child_nodes) == 0 and self._op_type is None
+        return len(self._child_nodes) == 0
 
     def __repr__(self):
         """Return a string representation of the tensor."""
@@ -153,12 +183,10 @@ class Tensor:
             per_dim_strides[i] = per_dim_strides[i + 1] * self.shape[i + 1]
         sliced_data: list[Scalar] = []
         # Apply the slice to each dimension.
-        for multi_dim_i in itertools.product(*int_ranges):
+        for nd_i in itertools.product(*int_ranges):
             # Convert the multi-dimensional index to a single index.
-            single_dim_i: int = sum(
-                multi_dim_i[i] * per_dim_strides[i] for i in range(self.ndim)
-            )
-            sliced_data.append(self.data[single_dim_i])
+            flattened_i: int = self._nd_i_to_1d_i(nd_i)
+            sliced_data.append(self.data[flattened_i])
         # Compute the shape of the sliced tensor.
         sliced_shape_list: list[int] = [
             math.ceil((stop - start) / end)  # type: ignore
@@ -198,7 +226,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="add",
         )
 
     def __radd__(self, other: AcceptedInput) -> Tensor:
@@ -213,7 +240,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="sub",
         )
 
     def __rsub__(self, other: AcceptedInput) -> Tensor:
@@ -224,7 +250,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="sub",
         )
 
     def __mul__(self, other: AcceptedInput) -> Tensor:
@@ -235,7 +260,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="mul",
         )
 
     def __rmul__(self, other: AcceptedInput) -> Tensor:
@@ -250,7 +274,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="div",
         )
 
     def __rtruediv__(self, other: AcceptedInput) -> Tensor:
@@ -261,7 +284,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="div",
         )
 
     def __pow__(self, other: AcceptedInput) -> Tensor:
@@ -272,7 +294,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="pow",
         )
 
     def __rpow__(self, other: AcceptedInput) -> Tensor:
@@ -283,7 +304,6 @@ class Tensor:
             shape=l.shape,
             requires_grad=l.requires_grad or r.requires_grad,
             _child_nodes=[l, r],
-            _op_type="pow",
         )
 
     def __neg__(self) -> Tensor:
@@ -293,7 +313,6 @@ class Tensor:
             shape=self.shape,
             requires_grad=self.requires_grad,
             _child_nodes=[self],
-            _op_type="neg",
         )
 
     @staticmethod
@@ -302,8 +321,8 @@ class Tensor:
         assert (
             l.shape == r.shape
         ), f"Cannot compute dot product of {l.shape} and {r.shape}."
-        assert l.ndim == 1
-        assert r.ndim == 1
+        assert l.ndim == 1 or l.shape == SCALAR_SHAPE
+        assert r.ndim == 1 or r.shape == SCALAR_SHAPE
         return ag.scalar.sum([x * y for x, y in zip(l.data, r.data)])
 
     @classmethod
@@ -314,7 +333,6 @@ class Tensor:
             shape=(1,),
             requires_grad=scalar.requires_grad,
             _child_nodes=[],
-            _op_type="scalar",
         )
 
     def __matmul__(self, other: AcceptedInput) -> Tensor:
@@ -337,45 +355,6 @@ class Tensor:
             dot_product: Scalar = self._vector_dot(l, r.flatten())
             return self.from_scalar(dot_product)
         elif l.ndim >= 2 and r.ndim >= 2:
-            # For 2D tensors, e.g with shape (2, 3) and (3, 4), we need to do
-            # the following:
-            # 1. Take the dot product of each row of the left tensor with each
-            #    column of the right tensor.
-            # 2. Stack the resulting vectors into a new tensor.
-            # For example, if we have:
-            # l = [[1, 2, 3], [4, 5, 6]]
-            # r = [[7, 8], [9, 10], [11, 12]]
-            # Then we need to do:
-            # l[0] dot r[:, 0] = [1, 2, 3] dot [7, 9, 11] = 1 * 7 + 2 * 9 + 3 * 11
-            # l[0] dot r[:, 1] = [1, 2, 3] dot [8, 10, 12] = 1 * 8 + 2 * 10 + 3 * 12
-            # l[1] dot r[:, 0] = [4, 5, 6] dot [7, 9, 11] = 4 * 7 + 5 * 9 + 6 * 11
-            # l[1] dot r[:, 1] = [4, 5, 6] dot [8, 10, 12] = 4 * 8 + 5 * 10 + 6 * 12
-            # And then stack the resulting vectors into a new tensor:
-            # [[1 * 7 + 2 * 9 + 3 * 11, 1 * 8 + 2 * 10 + 3 * 12],
-            #  [4 * 7 + 5 * 9 + 6 * 11, 4 * 8 + 5 * 10 + 6 * 12]]
-            #
-            # For tensors with more than 2 dimensions, we need to do the same
-            # thing, but for each "slice" of the tensor along each of the
-            # proceeding dimensions.
-
-            # Old code that only did the above for 2D tensors:
-            #  assert l.shape[-1] == r.shape[-2]
-            #  out_shape = (*l.shape[:-1], r.shape[-1])
-            #  out_data: list[Scalar] = [None] * (out_shape[0] * out_shape[1])  # type: ignore
-            #  for i in range(l.shape[1]):
-            #      vector_product: list[Scalar] = self._vector_dot(l[:, i], r[i, :]).data
-            #      for j in range(len(vector_product)):
-            #          out_data[j * out_shape[1] + i] = vector_product[j]
-            #  return Tensor(
-            #      data=out_data,
-            #      shape=out_shape,
-            #      requires_grad=l.requires_grad or r.requires_grad,
-            #      _child_nodes=[l, r],
-            #      _op_type="matmul",
-            #  )
-
-            # New code that does the above for tensors with any number of
-            # dimensions:
             assert l.shape[-1] == r.shape[-2]
             out_shape = (*l.shape[:-1], r.shape[-1])
             # Collapse all dimensions except the last two into a single
@@ -409,11 +388,11 @@ class Tensor:
                 shape=out_shape,
                 requires_grad=l.requires_grad or r.requires_grad,
                 _child_nodes=[l, r],
-                _op_type="matmul",
             )
         else:
             raise ValueError(
-                f"Cannot perform matrix multiplication on tensors with shapes {l.shape} and {r.shape}."
+                f"Cannot perform matrix multiplication on tensors with "
+                f"shapes {l.shape} and {r.shape}."
             )
 
     def numpy(self) -> np.ndarray:
@@ -500,7 +479,6 @@ class Tensor:
             shape=self.shape,
             requires_grad=self.requires_grad,
             _child_nodes=[self],
-            _op_type="sigmoid",
         )
 
     def tanh(self) -> Tensor:
@@ -510,7 +488,6 @@ class Tensor:
             shape=self.shape,
             requires_grad=self.requires_grad,
             _child_nodes=[self],
-            _op_type="tanh",
         )
 
     def relu(self) -> Tensor:
@@ -520,7 +497,6 @@ class Tensor:
             shape=self.shape,
             requires_grad=self.requires_grad,
             _child_nodes=[self],
-            _op_type="relu",
         )
 
     def mean(self, axis: Optional[int] = None) -> Tensor:
@@ -532,9 +508,9 @@ class Tensor:
                 shape=SCALAR_SHAPE,
                 requires_grad=self.requires_grad,
                 _child_nodes=[self],
-                _op_type="mean",
             )
         elif isinstance(axis, int):
+            raise NotImplementedError("Regression check against NumPy/Torch")
             assert 0 <= axis < len(self.shape), "axis out of bounds."
             new_shape = tuple(x for i, x in enumerate(self.shape) if i != axis)
             new_data = []
@@ -550,7 +526,6 @@ class Tensor:
                 shape=new_shape,
                 requires_grad=self.requires_grad,
                 _child_nodes=[self],
-                _op_type="mean",
             )
         elif isinstance(axis, (list, tuple)):
             assert all(isinstance(x, int) for x in axis), "axis must be a list of ints."
@@ -573,7 +548,6 @@ class Tensor:
                 shape=new_shape,
                 requires_grad=self.requires_grad,
                 _child_nodes=[self],
-                _op_type="mean",
             )
         else:
             raise TypeError("axis must be an int or a list of ints.")
@@ -582,27 +556,23 @@ class Tensor:
     def grad(self) -> Tensor:
         """Return the gradient of the tensor."""
         assert self.requires_grad, "This tensor does not require gradients."
-        return self._grad
-
-    @grad.setter
-    def grad(self, value: Tensor) -> None:
-        """Set the gradient of the tensor."""
-        assert self.requires_grad, "This tensor does not require gradients."
-        assert (
-            value.shape == self.shape
-        ), f"Gradient shape {value.shape} does not match tensor shape {self.shape}."
-        self._grad = value
+        return Tensor(
+            data=[x.grad for x in self.data],
+            shape=self.shape,
+            requires_grad=False,
+            _child_nodes=[],
+        )
 
     def backward(self):
         """Backpropagate the gradient through the graph."""
         # First ensure we have a scalar.
         assert (
-            self.shape == SCALAR_SHAPE
-        ), f"Cannot backpropagate through a tensor of shape {self.shape}."
+            self.size == 1
+        ), f"Cannot call backward on a non-scalar tensor of size {self.size}."
         self.data[0].backward()
 
 
-def _to_elementwise_op_tensor(x: Tensor, y: AcceptedInput):
+def _to_elementwise_op_tensor(x: Tensor, y: AcceptedInput) -> tuple[Tensor, Tensor]:
     """Ensure y is a Tensor, and broadcast x and y to the same shape."""
     if not isinstance(y, Tensor):
         y = Tensor(y)
