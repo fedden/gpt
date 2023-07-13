@@ -1,10 +1,23 @@
 """A scalar value with a gradient."""
 from __future__ import annotations
-from typing import Any, List, Optional, Type, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ag.op.scalar import Add, Mul, Op, Pow, Exp, Sigmoid, Tanh, Log, Sub, Max, Min, GreaterThan
+from ag.op.scalar import (
+    Add,
+    Mul,
+    Op,
+    Pow,
+    Exp,
+    Sigmoid,
+    Tanh,
+    Log,
+    Sub,
+    Max,
+    Min,
+    GreaterThan,
+)
 
 
 Number = Union[float, int]
@@ -19,35 +32,38 @@ class Scalar:
         data: AcceptedInput,
         requires_grad: bool = False,
         name: Optional[str] = None,
-        _child_nodes: Optional[List[Scalar]] = None,
-        _op_type: Optional[Type[Op]] = None,
+        _set_gradient: bool = True,
+        _child_nodes: Optional[list[Scalar]] = None,
+        _op_type: Optional[type[Op]] = None,
     ):
         """Initialize a scalar value with a gradient."""
         if isinstance(data, Scalar):
-            self.data: float = data.data
-            self._child_nodes = data._child_nodes
-            self.requires_grad = data.requires_grad
-            self.name = data.name
-            self.grad = data.grad
-            self._op_type = data._op_type
+            raise ValueError(
+                "Copy constructors break the graph - implement an identity op "
+                "and use that perhaps?"
+            )
         else:
             # Check data type is numeric.
             assert isinstance(
                 data, (float, int, np.integer, np.floating)
             ), f"Invalid data type: {type(data)}"
             self.data = float(data)
-            self.requires_grad: bool = requires_grad
-            self.grad: float = 0.0
-            self.name: Optional[str] = name
+            self.requires_grad = requires_grad
+            # TODO(leonfedden): Handle 2nd/3rd order gradients - recursion?
+            if _set_gradient:
+                self.grad = Scalar(0.0, requires_grad=False, _set_gradient=False)
+            else:
+                self.grad = None
+            self.name = name
             if _child_nodes is None:
-                self._child_nodes: List[Scalar] = []
+                self._child_nodes = []
             else:
                 assert isinstance(_child_nodes, list), "_child_nodes must be a list."
                 assert all(
                     isinstance(node, Scalar) for node in _child_nodes
                 ), "_child_nodes must be a list of Scalars."
                 self._child_nodes = _child_nodes
-            self._op_type: Optional[Type[Op]] = _op_type
+            self._op_type = _op_type
 
     @staticmethod
     def _to_scalar(x: AcceptedInput) -> Scalar:
@@ -63,7 +79,9 @@ class Scalar:
     def __repr__(self):
         """Return a string representation of the scalar."""
         object_type: str = self.__class__.__name__
-        elements: List[str] = [f"{self.data:.4f}", f"grad={self.grad:.4f}"]
+        elements: List[str] = [f"{self.data:.4f}"]
+        if self.grad is not None:
+            elements.append(f"grad={self.grad.data:.4f}")
         if self.name is not None:
             elements.append(f"name='{self.name}'")
         body: str = ", ".join(elements)
@@ -166,11 +184,13 @@ class Scalar:
 
     def backward(self, grad: Optional[float] = None) -> None:
         """Backward pass through the graph."""
+        assert self.grad is not None, "Gradient must be defined."
         # If this is the first node, set the gradient to 1.0.
         if grad is None:
             # Set the gradient for the first node to 1.0 because the gradient
             # of a scalar with respect to itself is 1.0.
-            grad = self.grad = 1.0
+            # TODO(leonfedden): Handle 2nd/3rd order gradients.
+            grad = self.grad = Scalar(1.0, requires_grad=False, _set_gradient=False)
         else:
             # Only add to the gradient if the node requires a gradient.
             self.grad += grad
