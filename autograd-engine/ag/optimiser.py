@@ -38,6 +38,6 @@ class SGDOptimiser(Optimiser):
         """Take a step in the optimiser."""
         for i, param in enumerate(self.params):
             if param.requires_grad:
-                grad_step: float = self.lr * param.grad
+                grad_step: float = self.lr * param.grad.data
                 self.velocities[i] = self.momentum * self.velocities[i] + grad_step
                 param.data -= self.velocities[i]
