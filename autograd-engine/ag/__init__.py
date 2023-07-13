@@ -2,6 +2,8 @@
 import math
 from typing import Any, List, Union
 
+from ag import ascii
+from ag import loss
 from ag.scalar import Parameter, Scalar
 from ag.tensor import Tensor
 
