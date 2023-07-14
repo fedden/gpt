@@ -1,5 +1,6 @@
 """A basic autograd library for learning purposes."""
 from __future__ import annotations
+import math
 
 import numpy as np
 import pytest
@@ -7,6 +8,28 @@ import torch
 
 import ag
 from ag.tensor import Tensor
+
+
+@pytest.mark.parametrize("axis", [0, 1, None])
+def test_concatenate(axis: int) -> None:
+    """Test concatenate."""
+    np_a = np.arange(4).astype(float).reshape(2, 2)
+    np_b = np.arange(4).astype(float).reshape(2, 2)
+    ag_a = Tensor(np_a, requires_grad=True)
+    ag_b = Tensor(np_b, requires_grad=True)
+    np_c = np.concatenate((np_a, np_b), axis=axis)
+    ag_c = ag.concatenate((ag_a, ag_b), axis=axis)
+    assert np.allclose(np_c, ag_c.numpy()), f"\nnp\n{np_c}\n\n!=\n\nag\n{ag_c.numpy()}"
+
+
+@pytest.mark.parametrize("shape,reps", [((2, 2), (2, 2)), ((2, 2), (1, 2))])
+def test_tile(shape: tuple[int, ...], reps: tuple[int, ...]) -> None:
+    """Test tile."""
+    np_a = np.arange(np.prod(shape)).astype(float).reshape(shape)
+    ag_a = Tensor(np_a, requires_grad=True)
+    np_b = np.tile(np_a, reps=reps)
+    ag_b = ag_a.tile(reps=reps)
+    assert np.allclose(np_b, ag_b.numpy()), f"\nnp\n{np_b}\n\n!=\n\nag\n{ag_b.numpy()}"
 
 
 def test_basic_elementwise_ops_and_broadcasting():
@@ -88,18 +111,24 @@ def test_matmul_backprop(a_shape: tuple[int, ...], b_shape: tuple[int, ...]) -> 
     [
         ((2, 2), (2, 2)),
         ((2, 2), (2, 1)),
+        ((2, 2), (1, 2)),
         ((2, 2), (1, 1)),
         ((2,), (2,)),
         ((1,), (1,)),
-        #  ((2, 1), (1,)),
-        #  ((2, 2), (2,)),
-        #  ((2, 2, 2), (2,)),
+        ((1, 2, 2), (1, 1, 2)),
+        ((2, 1), (1,)),
+        ((2, 2), (2,)),
+        ((2, 2, 2), (2,)),
     ],
 )
 def test_add_backprop(a_shape: tuple[int, ...], b_shape: tuple[int, ...]) -> None:
     """Test backpropagation against PyTorch's Tensor."""
-    torch_a: torch.Tensor = torch.rand(a_shape, requires_grad=True)
-    torch_b: torch.Tensor = torch.rand(b_shape, requires_grad=True)
+    torch_a: torch.Tensor = torch.zeros(
+        a_shape, dtype=torch.float64, requires_grad=True
+    )
+    torch_b: torch.Tensor = torch.arange(
+        math.prod(b_shape), dtype=torch.float64, requires_grad=True
+    ).reshape(b_shape)
     torch_c: torch.Tensor = torch_a + torch_b
     torch_d: torch.Tensor = torch.mean(torch_c, dim=None)
     torch_d.backward()
@@ -110,6 +139,7 @@ def test_add_backprop(a_shape: tuple[int, ...], b_shape: tuple[int, ...]) -> Non
     ag_d: Tensor = ag.mean(ag_c, axis=None)
     ag_d.name = "d"
     ag_d.backward()
+    assert np.allclose(torch_c.detach().numpy(), ag_c.numpy()), f"{torch_c} != {ag_c}"
     assert np.allclose(torch_d.detach().numpy(), ag_d.numpy()), f"{torch_d} != {ag_d}"
     assert np.allclose(
         torch_a.grad.numpy(), ag_a.grad.numpy()
@@ -138,13 +168,21 @@ def test_feedforward_network(
         for layer_i in range(n_layers):
             is_final_layer: bool = layer_i == n_layers - 1
             x = x @ weights[layer_i]
+            if isinstance(x, ag.Tensor):
+                x.name = f"weights_matmul_{layer_i}"
             activations.append(x)
             x = x + biases[layer_i]
+            if isinstance(x, ag.Tensor):
+                x.name = f"bias_add_{layer_i}"
             activations.append(x)
             if not is_final_layer:
                 x = activation_fn(x)
+                if isinstance(x, ag.Tensor):
+                    x.name = f"activation_{layer_i}"
                 activations.append(x)
         loss = loss_fn(y, x)
+        if isinstance(x, ag.Tensor):
+            loss.name = "loss"
         return loss, activations
 
     torch_activation_fns: dict[str, callable] = {
@@ -171,47 +209,40 @@ def test_feedforward_network(
             input_size if is_first_layer else layer_sizes[layer_i - 1]
         )
         weights_shape: tuple[int, int] = (1, prev_layer_size, layer_size)
-        bias_shape: tuple[int] = (1, layer_size)
+        bias_shape: tuple[int] = (layer_size,)
         torch_weights.append(
             torch.rand(weights_shape, requires_grad=True, dtype=torch.float64)
         )
         torch_biases.append(
             torch.rand(bias_shape, requires_grad=True, dtype=torch.float64)
         )
-        ag_weights.append(
-            ag.Tensor(torch_weights[-1].detach().numpy().copy(), requires_grad=True)
-        )
-        ag_biases.append(
-            ag.Tensor(torch_biases[-1].detach().numpy().copy(), requires_grad=True)
-        )
     final_weights_shape: tuple[int, int] = (1, layer_sizes[-1], output_size)
-    final_bias_shape: tuple[int] = (
-        1,
-        output_size,
-    )
+    final_bias_shape: tuple[int] = (output_size,)
     torch_weights.append(
         torch.rand(final_weights_shape, requires_grad=True, dtype=torch.float64)
     )
     torch_biases.append(
         torch.rand(final_bias_shape, requires_grad=True, dtype=torch.float64)
     )
-    ag_weights.append(
-        ag.Tensor(torch_weights[-1].detach().numpy().copy(), requires_grad=True)
-    )
-    ag_biases.append(
-        ag.Tensor(torch_biases[-1].detach().numpy().copy(), requires_grad=True)
-    )
-    for torch_w, torch_b in zip(torch_weights, torch_biases):
+    for layer_i, (torch_w, torch_b) in enumerate(zip(torch_weights, torch_biases)):
         torch_w.retain_grad()
         torch_b.retain_grad()
+        ag_weights.append(
+            Tensor(
+                torch_w.detach().numpy().copy(),
+                requires_grad=True,
+                name=f"w_{layer_i}",
+            )
+        )
+        ag_biases.append(
+            Tensor(
+                torch_b.detach().numpy().copy(),
+                requires_grad=True,
+                name=f"b_{layer_i}",
+            )
+        )
     torch_x: torch.Tensor = torch.rand((batch_size, input_size), dtype=torch.float64)
-    torch_y: torch.Tensor = torch.rand(
-        (
-            batch_size,
-            output_size,
-        ),
-        dtype=torch.float64,
-    )
+    torch_y: torch.Tensor = torch.rand((batch_size, output_size), dtype=torch.float64)
     ag_x: ag.Tensor = ag.Tensor(torch_x.detach().numpy().copy())
     ag_y: ag.Tensor = ag.Tensor(torch_y.detach().numpy().copy())
     torch_loss, torch_activations = _forward_feedforward(

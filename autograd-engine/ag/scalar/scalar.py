@@ -6,17 +6,18 @@ import numpy as np
 
 from ag.op.scalar import (
     Add,
+    Exp,
+    GreaterThan,
+    Identity,
+    Log,
+    Maximum,
+    Minimum,
     Mul,
     Op,
     Pow,
-    Exp,
-    Sigmoid,
     Tanh,
-    Log,
+    Sigmoid,
     Sub,
-    Max,
-    Min,
-    GreaterThan,
 )
 
 
@@ -26,6 +27,8 @@ AcceptedInput = Union[Number, "Scalar"]
 
 class Scalar:
     """A scalar value with a gradient."""
+
+    _no_grad: bool = False
 
     def __init__(
         self,
@@ -39,8 +42,7 @@ class Scalar:
         """Initialize a scalar value with a gradient."""
         if isinstance(data, Scalar):
             raise ValueError(
-                "Copy constructors break the graph - implement an identity op "
-                "and use that perhaps?"
+                "Copy constructors break the graph, use `Scalar.identity` instead."
             )
         else:
             # Check data type is numeric.
@@ -55,7 +57,7 @@ class Scalar:
             else:
                 self.grad = None
             self.name = name
-            if _child_nodes is None:
+            if _child_nodes is None or self._no_grad:
                 self._child_nodes = []
             else:
                 assert isinstance(_child_nodes, list), "_child_nodes must be a list."
@@ -74,7 +76,7 @@ class Scalar:
 
     def is_leaf_node(self) -> bool:
         """Return True if the node is a leaf node."""
-        return len(self._child_nodes) == 0 and self._op_type is None
+        return len(self._child_nodes) == 0
 
     def __repr__(self):
         """Return a string representation of the scalar."""
@@ -142,23 +144,27 @@ class Scalar:
             _op_type=GreaterThan,
         )
 
-    def max(self, other: AcceptedInput) -> Scalar:
+    def maximum(self, other: AcceptedInput) -> Scalar:
         """Compute the maximum of two scalars."""
         other = self._to_scalar(other)
         return Scalar(
-            data=Max(self, other).forward(), _child_nodes=[self, other], _op_type=Max
+            data=Maximum(self, other).forward(),
+            _child_nodes=[self, other],
+            _op_type=Maximum,
         )
 
-    def min(self, other: AcceptedInput) -> Scalar:
+    def minimum(self, other: AcceptedInput) -> Scalar:
         """Compute the minimum of two scalars."""
         other = self._to_scalar(other)
         return Scalar(
-            data=Min(self, other).forward(), _child_nodes=[self, other], _op_type=Min
+            data=Minimum(self, other).forward(),
+            _child_nodes=[self, other],
+            _op_type=Minimum,
         )
 
     def clip(self, min_value: AcceptedInput, max_value: AcceptedInput) -> Scalar:
         """Clip a scalar."""
-        return self.max(min_value).min(max_value)
+        return self.maximum(min_value).minimum(max_value)
 
     def exp(self) -> Scalar:
         """Compute the exponential of a scalar."""
@@ -176,11 +182,21 @@ class Scalar:
 
     def relu(self) -> Scalar:
         """Compute the rectified linear unit of a scalar."""
-        return self.max(0)
+        return self.maximum(0)
 
     def log(self) -> Scalar:
         """Compute the natural logarithm of a scalar."""
         return Scalar(data=Log(self).forward(), _child_nodes=[self], _op_type=Log)
+
+    def identity(self) -> Scalar:
+        """Return the scalar."""
+        return Scalar(
+            data=Identity(self).forward(), _child_nodes=[self], _op_type=Identity
+        )
+
+    def numpy(self) -> np.ndarray:
+        """Return the scalar as a numpy array."""
+        return np.array(self.data)
 
     def backward(self, grad: Optional[float] = None) -> None:
         """Backward pass through the graph."""

@@ -1,20 +1,20 @@
 """Loss functions."""
 import ag
-from ag.scalar import Scalar
+from ag.tensor import Tensor
 
 
-def hinge(y_true: Scalar, y_pred: Scalar) -> Scalar:
+def hinge(y_true: Tensor, y_pred: Tensor) -> Tensor:
     """Compute the hinge loss."""
-    return ag.max(Scalar(0), Scalar(1) - y_true * y_pred)
+    return ag.maximum(Tensor(0), Tensor(1) - y_true * y_pred)
 
 
-def mse(y_true: Scalar, y_pred: Scalar) -> Scalar:
+def mse(y_true: Tensor, y_pred: Tensor) -> Tensor:
     """Compute the mean squared error."""
     return ag.mean((y_true - y_pred) ** 2)
 
 
-def binary_cross_entropy(y_true: Scalar, y_pred: Scalar) -> Scalar:
+def binary_cross_entropy(y_true: Tensor, y_pred: Tensor) -> Tensor:
     """Compute the binary cross-entropy."""
-    return -y_true * ag.log(y_pred, safe=True) - (Scalar(1) - y_true) * ag.log(
-        Scalar(1) - y_pred, safe=True
+    return -y_true * ag.log(y_pred, safe=True) - (Tensor(1) - y_true) * ag.log(
+        Tensor(1) - y_pred, safe=True
     )

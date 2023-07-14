@@ -5,6 +5,16 @@ import abc
 import ag
 
 
+def no_grad(func):
+    """Decorate a function to ensure no gradients are tracked."""
+
+    def wrapper(*args, **kwargs):
+        with ag.no_grad():
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
 class Optimiser(abc.ABC):
     """Abstract base class for optimisers."""
 
@@ -40,6 +50,7 @@ class SGDOptimiser(Optimiser):
         self.momentum: float = momentum
         self.velocities: list[ag.Tensor] = [ag.zeros_like(p) for p in params]
 
+    @no_grad
     def step(self) -> None:
         """Take a step in the optimiser."""
         for i, param in enumerate(self.params):

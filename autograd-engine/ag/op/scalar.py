@@ -107,6 +107,31 @@ class Sub(Op):
         return grad, -grad
 
 
+class Identity(Op):
+    """Identity operation."""
+
+    NAME: str = "identity"
+
+    def __init__(self, x: "Scalar"):
+        """Initialize an operation."""
+        self.x = x
+
+    def forward(self) -> Number:
+        """Forward pass of the operation."""
+        return self.x.data
+
+    def backward(self, grad: Number) -> Number:
+        """Backward pass of the operation.
+
+        Parameters
+        ----------
+        grad: float
+            The gradient of the loss with respect to the output of the
+            operation.
+        """
+        return grad
+
+
 class Pow(Op):
     """Raise a number to a power."""
 
@@ -259,10 +284,10 @@ class Log(Op):
     #      return 1 / (self.x.data * math.log(self.y.data))
 
 
-class Max(Op):
+class Maximum(Op):
     """Compute the maximum of two numbers."""
 
-    NAME: str = "max"
+    NAME: str = "maximum"
 
     def __init__(self, x: "Scalar", y: "Scalar"):
         """Initialize an operation."""
@@ -288,10 +313,10 @@ class Max(Op):
             return 0.0, grad
 
 
-class Min(Op):
+class Minimum(Op):
     """Compute the minimum of two numbers."""
 
-    NAME: str = "min"
+    NAME: str = "minimum"
 
     def __init__(self, x: "Scalar", y: "Scalar"):
         """Initialize an operation."""

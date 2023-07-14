@@ -59,11 +59,11 @@ def test_forward_backward_against_torch_diamond(
         for s in [ag_a, ag_b, ag_c, ag_d]:
             print(f"value: {s.data:12.8f}, grad: {s.grad:12.8f}, name: {s.name}")
     assert np.isclose(
-        ag_a.grad, torch_a.grad.tolist()
+        ag_a.grad.numpy(), torch_a.grad.numpy()
     ), f"ag_a.grad ({ag_a.grad}) != torch_a.grad ({torch_a.grad.tolist()})"
     assert np.isclose(
-        ag_d.data, torch_d.data.tolist()
-    ), f"ag_c.data ({ag_d.data}) != torch_c.data ({torch_d.data.tolist()})"
+        ag_d.numpy(), torch_d.detach().numpy(),
+    ), f"ag_c.data ({ag_d.numpy()}) != torch_c.data ({torch_d.detach().numpy()})"
 
 
 @pytest.mark.parametrize(
@@ -120,9 +120,9 @@ def test_forward_backward_against_torch(a: float, b: float) -> None:
         ag_h.backward()
     print("AG")
     for s in [ag_a, ag_b, ag_c, ag_d, ag_e, ag_f, ag_g, ag_h]:
-        print(f"value: {s.data:12.8f}, grad: {s.grad:12.8f}, name: {s.name}")
-    assert np.isclose(ag_a.grad, torch_a.grad.tolist())
-    assert np.isclose(ag_h.data, torch_h.data.tolist())
+        print(f"value: {s.data:12.8f}, grad: {s.grad.data:12.8f}, name: {s.name}")
+    assert np.isclose(ag_a.grad.numpy(), torch_a.grad.numpy())
+    assert np.isclose(ag_h.numpy(), torch_h.detach().numpy())
 
 
 @pytest.mark.parametrize("a", [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0])
@@ -167,8 +167,8 @@ def test_forward_backward_against_torch_simple(
         for t in [ag_a, ag_b, ag_c]:
             print(f"value: {t.data:12.8f}, grad: {t.grad:12.8f}, name: {t.name}")
     assert np.isclose(
-        ag_a.grad, torch_a.grad.tolist()
+        ag_a.grad.numpy(), torch_a.grad.numpy()
     ), f"For {op}, ag_a.grad ({ag_a.grad}) != torch_a.grad ({torch_a.grad.tolist()})"
     assert np.isclose(
-        ag_c.data, torch_c.data.tolist()
-    ), f"For {op}, ag_c.data ({ag_c.data}) != torch_c.data ({torch_c.data.tolist()})"
+        ag_c.numpy(), torch_c.detach().numpy()
+    ), f"For {op}, ag_c ({ag_c.numpy()}) != torch_c ({torch_c.detach().numpy()})"
