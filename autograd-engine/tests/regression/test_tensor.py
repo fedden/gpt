@@ -83,7 +83,8 @@ def test_matmul(a_shape: float, b_shape: float) -> None:
         ((2, 1), (1, 4)),
         ((1, 2, 3), (1, 3, 4)),
         ((1, 1, 2, 3), (1, 1, 3, 4)),
-        # ((2, 2), (2,))
+        ((2, 2), (2,)),
+        ((1,), (1, 1, 2)),
     ],
 )
 def test_matmul_backprop(a_shape: tuple[int, ...], b_shape: tuple[int, ...]) -> None:

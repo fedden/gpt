@@ -438,20 +438,32 @@ class Tensor:
             return self._vector_dot(l, r)
         elif l.ndim == 2 and r.ndim == 1:
             assert l.shape[1] == r.shape[0]
-            assert l.shape[0] == 1
-            dot_product: Scalar = self._vector_dot(l.flatten(), r)
-            return self.from_scalar(dot_product)
+            n_products: int = l.shape[0]
+            out_shape: tuple[int, ...] = (n_products,)
+            out_data: list[Scalar] = []
+            for slice_i in range(n_products):
+                dot_product: Scalar = self._vector_dot(l[slice_i, :], r)
+                out_data.append(dot_product)
+            return Tensor(
+                data=out_data,
+                shape=out_shape,
+                requires_grad=l.requires_grad or r.requires_grad,
+                _child_nodes=[l, r],
+            )
         elif l.ndim == 1 and r.ndim == 2:
             assert l.shape[0] == r.shape[0]
             assert r.shape[1] == 1
             dot_product: Scalar = self._vector_dot(l, r.flatten())
             return self.from_scalar(dot_product)
-        elif l.ndim >= 2 and r.ndim >= 2:
+        elif r.ndim >= 2:
             assert l.shape[-1] == r.shape[-2]
             out_shape = (*l.shape[:-1], r.shape[-1])
-            # Collapse all dimensions except the last two into a single
-            # dimension, so that we can treat the tensor as a 2D tensor.
-            l = l.reshape(-1, l.shape[-2], l.shape[-1])
+            if l.ndim == 1:
+                l = l.reshape(1, 1, l.shape[-1])
+            else:
+                # Collapse all dimensions except the last two into a single
+                # dimension, so that we can treat the tensor as a 2D tensor.
+                l = l.reshape(-1, l.shape[-2], l.shape[-1])
             r = r.reshape(-1, r.shape[-2], r.shape[-1])
             out_data: list[Scalar] = [None] * math.prod(out_shape)  # type: ignore
             # For each slice of the tensor along the first dimension, take the
