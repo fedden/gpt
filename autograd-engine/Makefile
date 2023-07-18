@@ -34,7 +34,7 @@ init: check
 
 # Add recipe for running the tests.
 test: use_env
-	pytest -sx tests 
+	pytest -sx --pdb --pdbcls IPython.terminal.debugger:Pdb tests 
 
 
 # Add recipe for cleaning the environment.

@@ -235,14 +235,6 @@ class Scalar:
             child_node.backward(child_grad)
 
 
-class Parameter(Scalar):
-    """A scalar value with a gradient that can be optimized."""
-
-    def __init__(self, data: AcceptedInput, *args, **kwargs):
-        """Initialize a scalar value with a gradient that can be optimized."""
-        super().__init__(data, *args, **kwargs, requires_grad=True)  # type: ignore
-
-
 def _wrap_as_tuple(x: Any) -> Tuple[Any, ...]:
     """Wrap a value as a tuple."""
     if isinstance(x, tuple):

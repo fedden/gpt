@@ -120,7 +120,7 @@ def test_forward_backward_against_torch(a: float, b: float) -> None:
         ag_h.backward()
     print("AG")
     for s in [ag_a, ag_b, ag_c, ag_d, ag_e, ag_f, ag_g, ag_h]:
-        print(f"value: {s.data:12.8f}, grad: {s.grad.data:12.8f}, name: {s.name}")
+        print(f"value: {s.numpy():12.8f}, grad: {s.grad.numpy():12.8f}, name: {s.name}")
     assert np.isclose(ag_a.grad.numpy(), torch_a.grad.numpy())
     assert np.isclose(ag_h.numpy(), torch_h.detach().numpy())
 

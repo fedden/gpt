@@ -4,8 +4,8 @@ from typing import Any, Optional
 
 from ag import ascii
 from ag import loss
-from ag.scalar import Parameter, Scalar
-from ag.tensor import Tensor
+from ag.scalar import Scalar
+from ag.tensor import Tensor, Parameter
 
 LOG_EPSILON: float = 1e-12
 

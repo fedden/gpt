@@ -1,7 +1,7 @@
 """Functions for scalars."""
 from typing import Callable, Union
 
-from ag.scalar import Parameter, Scalar
+from ag.scalar import Scalar
 
 
 def sum(*args: Union[list[Scalar], Scalar]) -> Scalar:

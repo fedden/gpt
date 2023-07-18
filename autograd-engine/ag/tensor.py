@@ -639,6 +639,15 @@ class Tensor:
             _child_nodes=[self],
         )
 
+    def exp(self) -> Tensor:
+        """Apply the exp function to the tensor."""
+        return Tensor(
+            data=[x.exp() for x in self.data],
+            shape=self.shape,
+            requires_grad=self.requires_grad,
+            _child_nodes=[self],
+        )
+
     def mean(self, axis: Optional[int] = None) -> Tensor:
         """Compute the mean of the tensor."""
         if axis is None:
@@ -815,6 +824,14 @@ class Tensor:
         """Zero any gradients."""
         for scalar in self.data:
             scalar.grad.data = 0.0
+
+
+class Parameter(Tensor):
+    """A scalar value with a gradient that can be optimized."""
+
+    def __init__(self, *args, **kwargs):
+        """Initialize a scalar value with a gradient that can be optimized."""
+        super().__init__(*args, **kwargs, requires_grad=True)  # type: ignore
 
 
 def _to_tensor(x: AcceptedInput) -> Tensor:
