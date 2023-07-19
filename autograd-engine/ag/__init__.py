@@ -4,11 +4,15 @@ from typing import Any, Optional
 
 from ag import ascii
 from ag import loss
+from ag import nn
+from ag import random
+from ag import utils
 from ag.scalar import Scalar
 from ag.tensor import Tensor, Parameter
 
 LOG_EPSILON: float = 1e-12
 
+newaxis: Optional = None
 
 class no_grad:
     """Context-manager that disabled gradient calculation."""

@@ -14,15 +14,6 @@ SCALAR_SHAPE: tuple[int, ...] = tuple()
 AcceptedInput = Union[Scalar, float, int, list, np.ndarray]
 
 
-def flatten(container):
-    """Flatten a nested container."""
-    for i in container:
-        if isinstance(i, (list, tuple)):
-            yield from flatten(i)
-        else:
-            yield i
-
-
 class Tensor:
     """A nD tensor class for automatic differentiation of scalar functions."""
 
@@ -48,7 +39,7 @@ class Tensor:
         elif isinstance(data, (list, tuple)):
             self.data = [
                 x if isinstance(x, Scalar) else Scalar(x, requires_grad=requires_grad)
-                for x in flatten(data)
+                for x in ag.utils.flatten(data)
             ]
         else:
             self.data = [
@@ -146,14 +137,24 @@ class Tensor:
         assert isinstance(index, slice), "Index must be a slice."
         return (index,) + (slice(None, None, None),) * (len(self.shape) - 1)
 
-    def _key_to_int_slices(self, key: Union[int, slice, tuple]) -> list[int]:
+    def _key_to_int_slices(self, key: Union[int, slice, tuple]) -> tuple:
         """Convert a key to a list of flattened indices."""
         # Normalize the index to a tuple of slices.
         if isinstance(key, int):
+            insert_dims = []
             per_dim_slice = self._int_to_tuple(key)
+        elif key is None:
+            insert_dims = [0]
+            per_dim_slice = tuple()
         elif isinstance(key, slice):
+            insert_dims = []
             per_dim_slice = self._slice_to_tuple(key)
         elif isinstance(key, (tuple, list)):
+            # Some values of `key` may be `None` if the user specified
+            # `ag.newaxis`. Strip these out, and keep track of the dimensions that
+            # were removed as we will need to insert singleton dimensions later.
+            insert_dims: list[int] = [dim for dim, x in enumerate(key) if x is None]
+            key = tuple(x for x in key if x is not None)
             per_dim_slice = tuple(
                 self._int_to_slice(x, dim=dim) if isinstance(x, int) else x
                 for dim, x in enumerate(key)
@@ -167,13 +168,22 @@ class Tensor:
         assert all(
             isinstance(x, slice) for x in per_dim_slice
         ), f"Invalid index type {per_dim_slice}."
-        assert len(per_dim_slice) == len(self.shape), "Invalid number of dimensions."
+        if len(per_dim_slice) != len(self.shape):
+            # If the user did not specify an index for each dimension, fill in
+            # the missing dimensions with full slices.
+            per_dim_slice += (slice(None, None, None),) * (
+                len(self.shape) - len(per_dim_slice)
+            )
+        assert len(per_dim_slice) == len(self.shape), (
+            f"Number of indices ({len(per_dim_slice)}) does not match number "
+            f"of dimensions ({len(self.shape)})."
+        )
         # Convert the slice to a list of slices.
         int_slices: list[slice] = [
             dim_slice.indices(dim_size)
             for dim_slice, dim_size in zip(per_dim_slice, self.shape)
         ]
-        return int_slices
+        return int_slices, insert_dims
 
     def _int_slices_to_flattened_indices(self, int_slices: list[slice]) -> list[int]:
         """Convert a list of slices to a list of flattened indices."""
@@ -194,7 +204,7 @@ class Tensor:
     def __getitem__(self, key: Union[int, slice, tuple]) -> Tensor:
         """Return a subset of the tensor."""
         # Convert the key to a list of slices.
-        int_slices: list[slice] = self._key_to_int_slices(key)
+        int_slices, insert_dims = self._key_to_int_slices(key)
         # Convert the slices to a list of flattened indices.
         flattened_indices: list[int] = self._int_slices_to_flattened_indices(int_slices)
         sliced_data: list[Scalar] = []
@@ -208,6 +218,9 @@ class Tensor:
         ]
         # Remove any dimensions of size 1.
         sliced_shape: tuple[int, ...] = tuple(x for x in sliced_shape_list if x != 1)
+        # Insert singleton dimensions.
+        for dim in insert_dims:
+            sliced_shape = sliced_shape[:dim] + (1,) + sliced_shape[dim:]
         # Create a new tensor with the sliced data.
         return Tensor(
             data=sliced_data,
@@ -219,7 +232,7 @@ class Tensor:
     def __setitem__(self, key: Union[int, slice, tuple], value: AcceptedInput) -> None:
         """Set a subset of the tensor."""
         # Convert the key to a list of slices.
-        int_slices: list[slice] = self._key_to_int_slices(key)
+        int_slices, _ = self._key_to_int_slices(key)
         # Convert the slices to a list of flattened indices.
         flattened_indices: list[int] = self._int_slices_to_flattened_indices(int_slices)
         # Convert the value to a tensor.
