@@ -35,6 +35,7 @@ class Scalar:
         data: AcceptedInput,
         requires_grad: bool = False,
         name: Optional[str] = None,
+        dtype: Optional[type] = float,
         _set_gradient: bool = True,
         _child_nodes: Optional[list[Scalar]] = None,
         _op_type: Optional[type[Op]] = None,
@@ -49,7 +50,10 @@ class Scalar:
             assert isinstance(
                 data, (float, int, np.integer, np.floating)
             ), f"Invalid data type: {type(data)}"
-            self.data = float(data)
+            # Check dtype is valid.
+            assert dtype in (float, int, bool), f"Invalid dtype: {dtype}"
+            self.dtype = dtype
+            self.data = dtype(data)
             self.requires_grad = requires_grad
             # TODO(leonfedden): Handle 2nd/3rd order gradients - recursion?
             if _set_gradient:
@@ -233,6 +237,18 @@ class Scalar:
         # Propagate the gradient to each child node.
         for child_node, child_grad in zip(self._child_nodes, child_grads):
             child_node.backward(child_grad)
+
+    def int(self) -> Scalar:
+        """Cast the scalar to an integer."""
+        return Scalar(data=int(self.data), dtype=int)
+
+    def float(self) -> Scalar:
+        """Cast the scalar to a float."""
+        return Scalar(data=float(self.data), dtype=float)
+
+    def bool(self) -> Scalar:
+        """Cast the scalar to a bool."""
+        return Scalar(data=bool(self.data), dtype=bool)
 
 
 def _wrap_as_tuple(x: Any) -> Tuple[Any, ...]:

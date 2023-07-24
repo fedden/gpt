@@ -2,6 +2,7 @@
 from __future__ import annotations
 import itertools
 import math
+from dataclasses import dataclass
 from typing import Optional, Union
 
 import numpy as np
@@ -12,6 +13,7 @@ from ag.scalar import Scalar
 SCALAR_SHAPE: tuple[int, ...] = tuple()
 
 AcceptedInput = Union[Scalar, float, int, list, np.ndarray]
+
 
 
 class Tensor:
@@ -25,6 +27,7 @@ class Tensor:
         shape: Optional[tuple[int, ...]] = None,
         requires_grad: bool = False,
         name: Optional[str] = None,
+        dtype: Optional[type] = float,
         _set_name: bool = True,
         _child_nodes: Optional[list[Tensor]] = None,
     ):
@@ -33,19 +36,23 @@ class Tensor:
             self.data: list[Scalar] = data.data
         elif isinstance(data, np.ndarray):
             self.data = [
-                x if isinstance(x, Scalar) else Scalar(x, requires_grad=requires_grad)
+                x
+                if isinstance(x, Scalar)
+                else Scalar(x, requires_grad=requires_grad, dtype=dtype)
                 for x in data.flatten()
             ]
         elif isinstance(data, (list, tuple)):
             self.data = [
-                x if isinstance(x, Scalar) else Scalar(x, requires_grad=requires_grad)
+                x
+                if isinstance(x, Scalar)
+                else Scalar(x, requires_grad=requires_grad, dtype=dtype)
                 for x in ag.utils.flatten(data)
             ]
         else:
             self.data = [
                 data
                 if isinstance(data, Scalar)
-                else Scalar(data, requires_grad=requires_grad)
+                else Scalar(data, requires_grad=requires_grad, dtype=dtype)
             ]
         if shape is None:
             self.shape: tuple[int, ...] = self._infer_shape(data)
@@ -67,22 +74,6 @@ class Tensor:
             self._child_nodes = _child_nodes
         self.requires_grad: bool = requires_grad
         self.name: Optional[str] = name
-
-    def _nd_i_to_1d_i(self, nd_i: tuple[int, ...]) -> int:
-        """Convert multi-dim indices to 1D index for `self.data`."""
-        assert len(nd_i) == len(self.shape), (
-            f"Number of indices ({len(nd_i)}) does not match number of "
-            f"dimensions ({len(self.shape)})."
-        )
-        index: int = 0
-        for dim, dim_i in enumerate(nd_i):
-            assert dim_i < self.shape[dim], (
-                f"Index {dim_i} is out of bounds for dimension {dim} with "
-                f"shape {self.shape[dim]}."
-            )
-            index *= self.shape[dim]
-            index += dim_i
-        return index
 
     @staticmethod
     def _infer_shape(x: AcceptedInput) -> tuple[int, ...]:
@@ -117,110 +108,19 @@ class Tensor:
         body: str = ", ".join(elements)
         return f"{object_type}({body})"
 
-    def _int_to_slice(self, index: int, dim: int) -> slice:
-        """Convert an integer index to a slice."""
-        assert isinstance(index, int), "Index must be an integer."
-        assert index < self.shape[dim], "Index out of bounds."
-        return slice(index, index + 1, 1)
+    def __len__(self) -> int:
+        """Return the length of the tensor."""
+        return 0 if self.is_scalar else self.shape[0]
 
-    def _int_to_tuple(self, index: int) -> tuple:
-        """Convert an integer index to a tuple."""
-        assert isinstance(index, int), "Index must be an integer."
-        assert index < self.shape[0], "Index out of bounds."
-        # Index the first dimension, and return slice objects for the rest.
-        return (self._int_to_slice(index, dim=0),) + (slice(None, None, None),) * (
-            len(self.shape) - 1
-        )
-
-    def _slice_to_tuple(self, index: slice) -> tuple:
-        """Convert a slice index to a tuple."""
-        assert isinstance(index, slice), "Index must be a slice."
-        return (index,) + (slice(None, None, None),) * (len(self.shape) - 1)
-
-    def _key_to_int_slices(self, key: Union[int, slice, tuple]) -> tuple:
-        """Convert a key to a list of flattened indices."""
-        # Normalize the index to a tuple of slices.
-        if isinstance(key, int):
-            insert_dims = []
-            per_dim_slice = self._int_to_tuple(key)
-        elif key is None:
-            insert_dims = [0]
-            per_dim_slice = tuple()
-        elif isinstance(key, slice):
-            insert_dims = []
-            per_dim_slice = self._slice_to_tuple(key)
-        elif isinstance(key, (tuple, list)):
-            # Some values of `key` may be `None` if the user specified
-            # `ag.newaxis`. Strip these out, and keep track of the dimensions that
-            # were removed as we will need to insert singleton dimensions later.
-            insert_dims: list[int] = [dim for dim, x in enumerate(key) if x is None]
-            key = tuple(x for x in key if x is not None)
-            per_dim_slice = tuple(
-                self._int_to_slice(x, dim=dim) if isinstance(x, int) else x
-                for dim, x in enumerate(key)
-            )
-        else:
-            raise TypeError("Invalid index type.")
-        # Help with type checking.
-        assert isinstance(
-            per_dim_slice, tuple
-        ), f"Invalid index type {type(per_dim_slice)}."
-        assert all(
-            isinstance(x, slice) for x in per_dim_slice
-        ), f"Invalid index type {per_dim_slice}."
-        if len(per_dim_slice) != len(self.shape):
-            # If the user did not specify an index for each dimension, fill in
-            # the missing dimensions with full slices.
-            per_dim_slice += (slice(None, None, None),) * (
-                len(self.shape) - len(per_dim_slice)
-            )
-        assert len(per_dim_slice) == len(self.shape), (
-            f"Number of indices ({len(per_dim_slice)}) does not match number "
-            f"of dimensions ({len(self.shape)})."
-        )
-        # Convert the slice to a list of slices.
-        int_slices: list[slice] = [
-            dim_slice.indices(dim_size)
-            for dim_slice, dim_size in zip(per_dim_slice, self.shape)
-        ]
-        return int_slices, insert_dims
-
-    def _int_slices_to_flattened_indices(self, int_slices: list[slice]) -> list[int]:
-        """Convert a list of slices to a list of flattened indices."""
-        # Convert the slices to ranges.
-        int_ranges: list[range] = [
-            range(start, stop, step) for start, stop, step in int_slices
-        ]
-        # Get the strides for each dimension.
-        per_dim_strides: list[int] = [1] * len(self.shape)
-        for i in range(len(self.shape) - 2, -1, -1):
-            per_dim_strides[i] = per_dim_strides[i + 1] * self.shape[i + 1]
-        # Compute the flattened indices.
-        flattened_indices = [
-            self._nd_i_to_1d_i(nd_i) for nd_i in itertools.product(*int_ranges)
-        ]
-        return flattened_indices
 
     def __getitem__(self, key: Union[int, slice, tuple]) -> Tensor:
         """Return a subset of the tensor."""
         # Convert the key to a list of slices.
-        int_slices, insert_dims = self._key_to_int_slices(key)
-        # Convert the slices to a list of flattened indices.
-        flattened_indices: list[int] = self._int_slices_to_flattened_indices(int_slices)
+        flattened_indices, sliced_shape = self._key_to_int_slices(key)
         sliced_data: list[Scalar] = []
         # Apply the slice to each dimension.
         for flattened_i in flattened_indices:
             sliced_data.append(self.data[flattened_i])
-        # Compute the shape of the sliced tensor.
-        sliced_shape_list: list[int] = [
-            math.ceil((stop - start) / end)  # type: ignore
-            for (start, stop, end) in int_slices
-        ]
-        # Remove any dimensions of size 1.
-        sliced_shape: tuple[int, ...] = tuple(x for x in sliced_shape_list if x != 1)
-        # Insert singleton dimensions.
-        for dim in insert_dims:
-            sliced_shape = sliced_shape[:dim] + (1,) + sliced_shape[dim:]
         # Create a new tensor with the sliced data.
         return Tensor(
             data=sliced_data,
@@ -837,6 +737,38 @@ class Tensor:
         """Zero any gradients."""
         for scalar in self.data:
             scalar.grad.data = 0.0
+
+    def int(self) -> Tensor:
+        """Cast the tensor to an int."""
+        return Tensor(
+            data=[x.int() for x in self.data],
+            shape=self.shape,
+            requires_grad=False,
+            _child_nodes=[],
+        )
+
+    def float(self) -> Tensor:
+        """Cast the tensor to a float."""
+        return Tensor(
+            data=[x.float() for x in self.data],
+            shape=self.shape,
+            requires_grad=self.requires_grad,
+            _child_nodes=[],
+        )
+
+    def bool(self) -> Tensor:
+        """Cast the tensor to a bool."""
+        return Tensor(
+            data=[x.bool() for x in self.data],
+            shape=self.shape,
+            requires_grad=False,
+            _child_nodes=[],
+        )
+
+    @property
+    def dtype(self) -> type:
+        """Return the dtype of the tensor."""
+        return self.data[0].dtype
 
 
 class Parameter(Tensor):

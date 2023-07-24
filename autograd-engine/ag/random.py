@@ -2,6 +2,7 @@
 import math
 import random
 
+import ag
 from ag.tensor import Tensor
 
 
@@ -50,3 +51,16 @@ def normal(
         shape=shape,
         **kwargs,
     )
+
+
+def permutation(x: int | Tensor) -> Tensor:
+    """Return a tensor with values drawn from a permutation of `x`."""
+    if isinstance(x, int):
+        x = ag.arange(start=0, stop=x, step=1)
+    assert isinstance(x, Tensor)
+    random_indices: list[int] = random.sample(range(x.shape[0]), x.shape[0])
+    # TODO(leonfedden):
+    #   Implement indexing using lists of ints or int tensors and use that
+    #   here. For now, let's just use a list comprehension and concat.
+    elements = [x[i] for i in random_indices]
+    return ag.stack(elements, axis=0)

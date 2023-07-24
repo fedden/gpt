@@ -2,11 +2,7 @@
 import math
 from typing import Any, Optional
 
-from ag import ascii
-from ag import loss
-from ag import nn
-from ag import random
-from ag import utils
+from ag import ascii, loss, nn, optimiser, random, tensor, utils
 from ag.scalar import Scalar
 from ag.tensor import Tensor, Parameter
 
@@ -14,8 +10,10 @@ LOG_EPSILON: float = 1e-12
 
 newaxis: Optional = None
 
+
 class no_grad:
     """Context-manager that disabled gradient calculation."""
+
     def __init__(self) -> None:
         """Initialize a no_grad context manager."""
         self.prev: bool = False
@@ -45,6 +43,15 @@ def is_grad_enabled() -> bool:
     return not Scalar._no_grad
 
 
+def stack(tensors: list, axis: int = 0) -> Tensor:
+    """Stack tensors in an axis."""
+    t = tensors[0]
+    key = [slice(None) for _ in t.shape]
+    key = key[:axis] + [newaxis] + key[axis:]
+    return concatenate([t[key] for t in tensors], axis=axis)
+
+
+
 def concatenate(tensors: list[Tensor], axis: Optional[int] = 0) -> Tensor:
     """Concatenate tensors along an axis."""
     assert len(tensors) > 0, "Must pass at least one tensor."
@@ -57,12 +64,13 @@ def concatenate(tensors: list[Tensor], axis: Optional[int] = 0) -> Tensor:
     # are concatenating along.
     shape = tensors[0].shape
     for tensor in tensors:
-        assert tensor.shape[:axis] == shape[:axis], (
-            f"Expected shape {shape[:axis]}, got {tensor.shape[:axis]}."
-        )
-        assert tensor.shape[axis + 1 :] == shape[axis + 1 :], (
-            f"Expected shape {shape[axis + 1 :]}, got {tensor.shape[axis + 1 :]}."
-        )
+        assert not tensor.is_scalar, "Zero-dimensional arrays cannot be concatenated"
+        assert (
+            tensor.shape[:axis] == shape[:axis]
+        ), f"Expected shape {shape[:axis]}, got {tensor.shape[:axis]}."
+        assert (
+            tensor.shape[axis + 1 :] == shape[axis + 1 :]
+        ), f"Expected shape {shape[axis + 1 :]}, got {tensor.shape[axis + 1 :]}."
     # Concatenate the data in the right order as defined by the axis.
     new_shape = list(shape)
     new_shape[axis] = sum(tensor.shape[axis] for tensor in tensors)
@@ -83,18 +91,14 @@ def isclose(x: Any, y: Any, *, rel_tol: float = 1e-9, abs_tol: float = 0.0) -> b
     if isinstance(x, Scalar):
         x_float: float = x.data
     elif isinstance(x, Tensor):
-        assert x.is_scalar, (
-            f"Logic only implemented for scalars, got shape {x.shape}."
-        )
+        assert x.is_scalar, f"Logic only implemented for scalars, got shape {x.shape}."
         x_float = x.data[0].data
     else:
         x_float = x
     if isinstance(y, Scalar):
         y_float: float = y.data
     elif isinstance(y, Tensor):
-        assert y.is_scalar, (
-            f"Logic only implemented for scalars, got shape {y.shape}."
-        )
+        assert y.is_scalar, f"Logic only implemented for scalars, got shape {y.shape}."
         y_float = y.data[0].data
     else:
         y_float = y
@@ -125,6 +129,12 @@ def zeros(shape: tuple[int, ...]) -> Tensor:
 def ones(shape: tuple[int, ...]) -> Tensor:
     """Ones of shape `shape`."""
     return _fill(shape, 1.0)
+
+
+def arange(start: float, stop: float, step: float = 1) -> Tensor:
+    """Return evenly spaced values within a given interval."""
+    data = [x for x in range(start, stop, step)]
+    return Tensor(data, shape=(len(data),), requires_grad=False, dtype=int)
 
 
 def maximum(x: Tensor, y: Tensor) -> Tensor:
