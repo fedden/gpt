@@ -328,6 +328,10 @@ class Tensor:
     @staticmethod
     def _vector_dot(l: Tensor, r: Tensor) -> Scalar:
         """Compute the dot product of two vectors."""
+        if l.ndim != 1 or l.shape != SCALAR_SHAPE:
+            l = l.squeeze()
+        if r.ndim != 1 or r.shape != SCALAR_SHAPE:
+            r = r.squeeze()
         assert (
             l.shape == r.shape
         ), f"Cannot compute dot product of {l.shape} and {r.shape}."
@@ -450,7 +454,9 @@ class Tensor:
         elif name is not None and self.shape != SCALAR_SHAPE:
             ranges = [range(dim) for dim in self.shape]
             for nd_i in itertools.product(*ranges):
-                flattened_i: int = self._nd_i_to_1d_i(nd_i)
+                flattened_i: int = slicing_utils.nd_i_to_1d_i(
+                    shape=self.shape, nd_i=nd_i
+                )
                 self.data[flattened_i].name = f"{name}{list(nd_i)}"
 
     def tile(self, reps: list[int] | tuple[int]) -> Tensor:

@@ -101,7 +101,7 @@ def _slice_to_per_dim_info(s: slice, shape: tuple[int, ...]) -> list[DimInfo]:
     return [DimInfo.from_slice_and_dim_size(s, dim_size)]
 
 
-def _nd_i_to_1d_i(shape: tuple[int, ...], nd_i: tuple[int, ...]) -> int:
+def nd_i_to_1d_i(shape: tuple[int, ...], nd_i: tuple[int, ...]) -> int:
     """Convert multi-dim indices to 1D index for `self.data`."""
     assert len(nd_i) == len(shape), (
         f"Number of indices ({len(nd_i)}) does not match number of "
@@ -129,7 +129,7 @@ def _per_dim_info_to_flattened_indices(
     # Compute the flattened indices.
     per_dim_indices: list[list[int]] = [dim_info.indices for dim_info in per_dim_info]
     flattened_indices = [
-        _nd_i_to_1d_i(shape=shape, nd_i=nd_i)
+        nd_i_to_1d_i(shape=shape, nd_i=nd_i)
         for nd_i in itertools.product(*per_dim_indices)
     ]
     return flattened_indices
