@@ -9,6 +9,7 @@ import numpy as np
 
 import ag
 from ag.scalar import Scalar
+from ag.tensor import slicing_utils
 
 SCALAR_SHAPE: tuple[int, ...] = tuple()
 
@@ -113,12 +114,15 @@ class Tensor:
 
     def __getitem__(self, key: Union[int, slice, tuple]) -> Tensor:
         """Return a subset of the tensor."""
-        # Convert the key to a list of slices.
-        flattened_indices, sliced_shape = slicing_utils.key_to_int_slices(key)
-        sliced_data: list[Scalar] = []
-        # Apply the slice to each dimension.
-        for flattened_i in flattened_indices:
-            sliced_data.append(self.data[flattened_i])
+        # Convert the key (could be all sorts of things depending on what the
+        # user sends us) to a list of indices, and a new shape.
+        flattened_indices, sliced_shape = slicing_utils.key_to_int_slices(
+            key=key, shape=self.shape
+        )
+        # Create a list of the sliced data, using flattened indices.
+        sliced_data: list[Scalar] = [None] * len(flattened_indices)
+        for sliced_i, flattened_i in enumerate(flattened_indices):
+            sliced_data[sliced_i] = self.data[flattened_i]
         # Create a new tensor with the sliced data.
         return Tensor(
             data=sliced_data,
@@ -129,16 +133,18 @@ class Tensor:
 
     def __setitem__(self, key: Union[int, slice, tuple], value: AcceptedInput) -> None:
         """Set a subset of the tensor."""
-        # Convert the key to a list of slices.
-        int_slices, _ = slicing_utils.key_to_int_slices(key)
-        # Convert the slices to a list of flattened indices.
-        flattened_indices: list[int] = slicing_utils.int_slices_to_flattened_indices(int_slices)
+        # Convert the key (could be all sorts of things depending on what the
+        # user sends us) to a list of indices, and a new shape.
+        flattened_indices, _ = slicing_utils.key_to_int_slices(
+            key=key, shape=self.shape
+        )
         # Convert the value to a tensor.
         value: Tensor = _to_tensor(value)
         # If the value is same size but different shape, broadcast it to the
         # shape of the slice.
-        if value.size == self[key].size and value.shape != self[key].shape:
-            value = value.reshape(self[key].shape)
+        sliced_self: Tensor = self[key]
+        if value.size == sliced_self.size and value.shape != sliced_self.shape:
+            value = value.reshape(sliced_self.shape)
         # Check that the shapes match.
         assert (
             value.shape == self[key].shape
@@ -322,10 +328,6 @@ class Tensor:
     @staticmethod
     def _vector_dot(l: Tensor, r: Tensor) -> Scalar:
         """Compute the dot product of two vectors."""
-        if l.ndim != 1 or l.shape != SCALAR_SHAPE:
-            l = l.squeeze()
-        if r.ndim != 1 or r.shape != SCALAR_SHAPE:
-            r = r.squeeze()
         assert (
             l.shape == r.shape
         ), f"Cannot compute dot product of {l.shape} and {r.shape}."
@@ -489,6 +491,28 @@ class Tensor:
             requires_grad=self.requires_grad,
             name=self.name,
         )
+
+    def squeeze(self, axis: int | None = None) -> Tensor:
+        """Squeeze the tensor."""
+        if axis is None:
+            axis = tuple(i for i, dim in enumerate(self.shape) if dim == 1)
+        elif isinstance(axis, int):
+            axis = (axis,)
+        else:
+            raise ValueError("axis must be an int or None.")
+        assert all(
+            0 <= x < len(self.shape) for x in axis
+        ), "axis must be in the range [0, ndim)."
+        shape = tuple(dim for i, dim in enumerate(self.shape) if i not in axis)
+        return self.reshape(shape)
+
+    def unsqueeze(self, axis: int) -> Tensor:
+        """Unsqueeze the tensor."""
+        assert isinstance(axis, int), "axis must be an int."
+        assert 0 <= axis <= len(self.shape), "axis must be in the range [0, ndim]."
+        shape = list(self.shape)
+        shape.insert(axis, 1)
+        return self.reshape(shape)
 
     def flatten(self) -> Tensor:
         """Flatten the tensor."""

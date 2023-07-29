@@ -39,6 +39,9 @@ class DimInfo:
     def __post_init__(self):
         """Post initialization."""
         if self.tensor is not None:
+            # Avoid circular import.
+            from ag.tensor.tensor import Tensor
+
             assert isinstance(self.tensor, Tensor)
             assert (
                 self.tensor.ndim == 1
@@ -68,34 +71,34 @@ class DimInfo:
             return list(range(self.start, self.stop, self.step))
 
 
-def _int_to_slice(index: int, dim_size: int) -> slice:
-    """Convert an integer index to a slice."""
-    assert isinstance(index, int), "Index must be an integer."
-    assert index < dim_size, "Index out of bounds."
-    return slice(index, index + 1, 1)
-
-
-def _int_to_tuple(index: int, shape: tuple[int, ...]) -> tuple:
+def _int_to_per_dim_info(index: int, shape: tuple[int, ...]) -> list[DimInfo]:
     """Convert an integer index to a tuple."""
+    dim_size: int = shape[0]
     assert isinstance(index, int), "Index must be an integer."
-    assert index < shape[0], "Index out of bounds."
-    # Index the first dimension, and return slice objects for the rest.
-    return (_int_to_slice(index, dim=0),) + (slice(None, None, None),) * (
-        len(shape) - 1
-    )
+    assert (
+        index < dim_size
+    ), f"Index {index} is out of bounds for dimension of size {dim_size}."
+    return [DimInfo.from_slice_and_dim_size(slice(index, index + 1, 1), dim_size)]
 
 
-def _tensor_to_tuple(index: "Tensor") -> tuple:
+def _tensor_to_per_dim_info(tensor_indices: "Tensor") -> list[DimInfo]:
     """Convert a tensor index to a tuple."""
-    assert index.dtype == int, "Index must be an integer tensor."
-    assert index.is_scalar or index.ndim == 1, "Index must be a 1D tensor."
-    return tuple(index)
+    assert tensor_indices.dtype == int, "Index must be an integer tensor."
+    # Remove all singleton dimensions.
+    tensor_indices = tensor_indices.squeeze()
+    assert tensor_indices.is_scalar or tensor_indices.ndim == 1, (
+        f"Cannot index with a tensor of dimension {tensor_indices.ndim} and "
+        f"shape {tensor_indices.shape}."
+    )
+    # Use tensor for 0th dim, and return slice objects for the rest.
+    return [DimInfo.from_tensor(tensor_indices)]
 
 
-def _slice_to_tuple(index: slice, shape: tuple[int, ...]) -> tuple:
+def _slice_to_per_dim_info(s: slice, shape: tuple[int, ...]) -> list[DimInfo]:
     """Convert a slice index to a tuple."""
-    assert isinstance(index, slice), "Index must be a slice."
-    return (index,) + (slice(None, None, None),) * (len(shape) - 1)
+    dim_size: int = shape[0]
+    assert isinstance(s, slice), "Index must be a slice."
+    return [DimInfo.from_slice_and_dim_size(s, dim_size)]
 
 
 def _nd_i_to_1d_i(shape: tuple[int, ...], nd_i: tuple[int, ...]) -> int:
@@ -115,84 +118,93 @@ def _nd_i_to_1d_i(shape: tuple[int, ...], nd_i: tuple[int, ...]) -> int:
     return index
 
 
-def _key_to_int_slices(self, key: int | slice | tuple | "Tensor") -> tuple:
-    """Convert a key to a list of flattened indices."""
-    # Normalize the index to a tuple of slices.
-    if isinstance(key, int):
-        insert_dims = []
-        per_dim_info = self._int_to_tuple(key)
-    elif key is None:
-        insert_dims = [0]
-        per_dim_info = tuple()
-    elif isinstance(key, ag.Tensor):
-        insert_dims = []
-        per_dim_info = self._tensor_to_tuple(key)
-    elif isinstance(key, slice):
-        insert_dims = []
-        per_dim_info = self._slice_to_tuple(key)
-    elif isinstance(key, (tuple, list)):
-        # Some values of `key` may be `None` if the user specified
-        # `ag.newaxis`. Strip these out, and keep track of the dimensions that
-        # were removed as we will need to insert singleton dimensions later.
-        insert_dims: list[int] = [dim for dim, x in enumerate(key) if x is None]
-        key = tuple(x for x in key if x is not None)
-        per_dim_info = tuple(
-            self._int_to_slice(x, dim=dim) if isinstance(x, int) else x
-            for dim, x in enumerate(key)
-        )
-    else:
-        raise TypeError(f"Invalid index type {type(key)}.")
-    # Help with type checking.
-    assert isinstance(per_dim_info, tuple), f"Invalid index type {type(per_dim_info)}."
-    assert all(
-        isinstance(x, slice) for x in per_dim_info
-    ), f"Invalid index type {per_dim_info}."
-    if len(per_dim_info) != len(self.shape):
-        # If the user did not specify an index for each dimension, fill in
-        # the missing dimensions with full slices.
-        per_dim_info += (slice(None, None, None),) * (
-            len(self.shape) - len(per_dim_info)
-        )
-    assert len(per_dim_info) == len(self.shape), (
-        f"Number of indices ({len(per_dim_info)}) does not match number "
-        f"of dimensions ({len(self.shape)})."
-    )
-
-    # Convert the slice to a list of slices.
-    int_slices: list[slice] = [
-        dim_slice.indices(dim_size)
-        for dim_slice, dim_size in zip(per_dim_info, self.shape)
-    ]
-    breakpoint()
-    # Compute the shape of the sliced tensor.
-    sliced_shape_list: list[int] = [
-        math.ceil((stop - start) / end)  # type: ignore
-        for (start, stop, end) in int_slices
-    ]
-    # Remove any dimensions of size 1.
-    sliced_shape: tuple[int, ...] = tuple(x for x in sliced_shape_list if x != 1)
-    # Insert singleton dimensions.
-    for dim in insert_dims:
-        sliced_shape = sliced_shape[:dim] + (1,) + sliced_shape[dim:]
-    # Convert the slices to a list of flattened indices.
-    flattened_indices: list[int] = self._int_slices_to_flattened_indices(int_slices)
-    return flattened_indices, sliced_shape
-
-
-def _int_slices_to_flattened_indices(
-    int_slices: list[slice], shape: tuple[int, ...]
+def _per_dim_info_to_flattened_indices(
+    per_dim_info: list[DimInfo], shape: tuple[int, ...]
 ) -> list[int]:
-    """Convert a list of slices to a list of flattened indices."""
-    # Convert the slices to ranges.
-    int_ranges: list[range] = [
-        range(start, stop, step) for start, stop, step in int_slices
-    ]
+    """Convert a list of DimInfo to a list of flattened indices."""
     # Get the strides for each dimension.
     per_dim_strides: list[int] = [1] * len(shape)
     for i in range(len(shape) - 2, -1, -1):
         per_dim_strides[i] = per_dim_strides[i + 1] * shape[i + 1]
     # Compute the flattened indices.
+    per_dim_indices: list[list[int]] = [dim_info.indices for dim_info in per_dim_info]
     flattened_indices = [
-        _nd_i_to_1d_i(nd_i) for nd_i in itertools.product(*int_ranges)
+        _nd_i_to_1d_i(shape=shape, nd_i=nd_i)
+        for nd_i in itertools.product(*per_dim_indices)
     ]
     return flattened_indices
+
+
+def _key_to_per_dim_info(
+    key: int | slice | tuple | "Tensor",
+    shape: tuple[int, ...],
+    return_insert_dims: bool = True,
+) -> list[DimInfo]:
+    """Convert a key to list of per-dimension info."""
+    # Avoid circular import.
+    from ag.tensor.tensor import Tensor
+
+    # Normalize the index to a tuple of slices.
+    if isinstance(key, int):
+        insert_dims = []
+        per_dim_info = _int_to_per_dim_info(index=key, shape=shape)
+    elif key is None:
+        insert_dims = [0]
+        per_dim_info = tuple()
+    elif isinstance(key, Tensor):
+        insert_dims = []
+        per_dim_info = _tensor_to_per_dim_info(tensor_indices=key)
+    elif isinstance(key, slice):
+        insert_dims = []
+        per_dim_info = _slice_to_per_dim_info(s=key, shape=shape)
+    elif isinstance(key, (tuple, list)):
+        # Some values of `key` may be `None` if the user specified
+        # `ag.newaxis`. Strip these out, and keep track of the dimensions that
+        # were removed as we will need to insert singleton dimensions later.
+        insert_dims: list[int] = [dim for dim, x in enumerate(key) if x is None]
+        per_dim_info = [
+            _key_to_per_dim_info(key=x, shape=(dim_size,), return_insert_dims=False)[0]
+            for x, dim_size in zip(key, shape)
+            if x is not None
+        ]
+    else:
+        raise TypeError(f"Invalid index type {type(key)}.")
+    assert isinstance(per_dim_info, list), f"Invalid index type {type(per_dim_info)}."
+    if len(per_dim_info) != len(shape):
+        # If the user did not specify an index for each dimension, fill in
+        # the missing dimensions with full slices.
+        per_dim_info += [
+            DimInfo.from_slice_and_dim_size(slice(None), dim_size)
+            for dim_size in shape[len(per_dim_info) :]
+        ]
+    assert all(
+        isinstance(x, DimInfo) for x in per_dim_info
+    ), f"Invalid index type {per_dim_info}."
+    if return_insert_dims:
+        return per_dim_info, insert_dims
+    else:
+        return per_dim_info
+
+
+def key_to_int_slices(
+    key: int | slice | tuple | "Tensor", shape: tuple[int, ...]
+) -> tuple:
+    """Convert a key to a list of flattened indices."""
+    per_dim_info, insert_dims = _key_to_per_dim_info(key=key, shape=shape)
+    # Help with type checking.
+    assert len(per_dim_info) == len(shape), (
+        f"Number of indices ({len(per_dim_info)}) does not match number "
+        f"of dimensions ({len(shape)})."
+    )
+    # Remove any dimensions of size 1.
+    sliced_shape: tuple[int, ...] = tuple(
+        dim_info.size for dim_info in per_dim_info if dim_info != 1
+    )
+    # Insert singleton dimensions.
+    for dim in insert_dims:
+        sliced_shape = sliced_shape[:dim] + (1,) + sliced_shape[dim:]
+    # Convert the slices to a list of flattened indices.
+    flattened_indices: list[int] = _per_dim_info_to_flattened_indices(
+        per_dim_info=per_dim_info, shape=shape
+    )
+    return flattened_indices, sliced_shape

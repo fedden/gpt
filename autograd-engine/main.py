@@ -33,6 +33,7 @@ def main():
     )
     for _ in range(n_epochs):
         indices = ag.random.permutation(len(ag_x))
+        breakpoint()
         ag_y_hat: ag.Tensor = ag_network(ag_x[indices])
         ag_loss: ag.Tensor = ag.loss.mse(ag_y[indices], ag_y_hat)
         ag_optimiser.zero_grad()

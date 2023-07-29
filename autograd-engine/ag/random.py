@@ -63,4 +63,4 @@ def permutation(x: int | Tensor) -> Tensor:
     #   Implement indexing using lists of ints or int tensors and use that
     #   here. For now, let's just use a list comprehension and concat.
     elements = [x[i] for i in random_indices]
-    return ag.stack(elements, axis=0)
+    return ag.stack(elements, axis=0).squeeze()
